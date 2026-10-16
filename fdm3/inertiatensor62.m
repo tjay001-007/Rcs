@@ -1,0 +1,80 @@
+% Mass properties
+Ixx =  74848 ;                                                               % kg.m2
+Iyy = 288344;                                                               % kg.m2
+Izz = 390125;                                                               % kg.m2
+Ixz = 2511 ;                                                              % kg.m2
+Inertia = [Ixx 0 -Ixz; 0 Iyy 0; -Ixz 0 Izz];  
+
+Ixx1 = 32379;                                                               % kg.m2
+Iyy1 = 136386;                                                               % kg.m2
+Izz1 = 168765;                                                               % kg.m2
+Ixz1 = 2511;                                                                % kg.m2
+InertiaEmpty = [Ixx1 0 -Ixz1; 0 Iyy1 0; -Ixz1 0 Izz1];  
+
+
+
+
+
+
+% Inertia tensor
+y_cg = 0;                                                                   % m (+ is to the right of ref. plane)
+z_cg = 0.0;                                                                % m (+ is below the ref. plane)
+g = 9.80665;                                                                % m/s2
+Mass_kg=24650;
+Xcg=9.87;
+% Engine Data
+V_reference_mps = 200;                                                      % m/s
+rho_reference_kgpm3 = 1.225;                                                % kg/m3
+nv = 0;
+nrho = 0.75;
+alfaf_deg = -1.8;                                                           % Thrust angle - deg
+xf_m = 0;                                                                % Enigne distance on x axis from approximate CG position - m (+ is FWD of the CG)
+zf_m = 0.0;                                                                % Enigne distance on z axis from approximate CG position - m (+ is below the ref. plane)
+Tmax = 140000;                                                               % Thrust - N
+
+% Aircraft Data
+S = 85.25;                                                                     % Wing Area - m2
+c = 15.55;                                                                    % Mean Aerodynamic Chord - m
+b = 9.05;                                                                     % Wing Span - m
+
+% Aerodynamic Data
+
+% Lift Coefficient Derivatives
+CL0 = 0.00003;
+CL_alpha = -0.247;
+CL_elev = 0.0179;
+CL_AlphaDot = 0;
+CL_q = -0.114;
+% Drag Coefficient Derivatives
+CD0 = 0.00554;
+CD_alpha = 0.0177;
+CD_elev = 0.0001;
+% Side force Coefficient Derivatives
+CY_beta = 0.0228;
+CY_rud = 0;
+CY_ail = 0.00327;
+CY_r = 0.105;
+CY_p = 0.0305;
+% Rolling moment Derivatives
+Cl_beta = 0.0393;
+Cl_rud = 0;
+Cl_ail = -0.00325;
+Cl_r = -0.035;
+Cl_p = -0.00065;
+% Pitching moment Derivatives
+Cm0 = 0.00007;
+Cm_alpha = -0.124;
+Cm_elev = -0.0084;
+Cm_AlphaDot = 0;
+Cm_q = -0.025;
+% Yawing moment Derivatives
+Cn_beta = -0.0123;
+Cn_rud = 0;
+Cn_ail = -0.00194;
+Cn_r = 0.0168;
+Cn_p = -0.0185;
+
+
+Lgrfrontx=1.92
+Lgrfronty=0
+Lgrfrontz=0.5

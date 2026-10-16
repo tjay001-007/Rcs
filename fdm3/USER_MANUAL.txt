@@ -1,0 +1,795 @@
+================================================================================
+ ACFT11_a_121  —  TWO-STAGE CARRIER DEMONSTRATOR SPACEPLANE
+ FULL-MISSION FLIGHT CONTROL SYSTEM (FCS) + GN&C STACK
+ USER MANUAL
+================================================================================
+ Model file : ACFT11_a_121.slx   (Simulink, variable-step ode15s)
+ Scope      : autonomous ground-takeoff -> climb -> accelerate -> zoom ->
+              stage separation -> ballistic coast -> energy glide ->
+              air-breathing relight -> cruise return-to-base -> ILS-style
+              approach -> flare -> touchdown -> braked rollout -> stop.
+ Last update: see fcs_params.m header / git history.
+================================================================================
+
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+ 0.  QUICK START (the 4 commands)
+ 1.  FILE INVENTORY (what each file is for)
+ 2.  HOW TO RUN THE SIMULATION MANUALLY (order of operations)
+ 3.  THE INPUT / PARAMETER FILE  (fcs_params.m, section by section)
+ 4.  SCENARIO SELECTION, SOLVER, LOGGING & PACING (setup_fcs_sim.m)
+ 5.  TOP-LEVEL MODEL ARCHITECTURE (signal flow)
+ 6.  THE MISSION MANAGER (Stateflow sequencer — 18 phases)
+ 7.  GUIDANCE
+       7.1  Ascent guidance (climb / accel / zoom / coast)
+       7.2  GlideCompute (energy glide + descent flight-path)
+       7.3  RTB_Guidance (ILS localizer + two-segment glide slope)
+       7.4  L1law (lateral-acceleration guidance)
+ 8.  ESTIMATION (energy, qbar, sink, descending, relight envelope)
+ 9.  THE CONTROLLER STRUCTURE (FCS internals)
+       9.1  INDI inner rate loop
+       9.2  Attitude command (ACAH) outer loop
+       9.3  TECS longitudinal autopilot
+       9.4  HeadingHold / L1 lateral
+       9.5  ModeManager & the longitudinal law switch
+       9.6  Pilot_RCAH (remote-pilot path)
+       9.7  Envelope protection
+10.  HOW OPTIMUM GAINS ARE FOUND
+       10.1 INDI G-matrix schedule (setup_gschedule.m)
+       10.2 Automated gain optimiser (optimize_indi_gains.m)
+       10.3 Manual tuning order of operations
+11.  SUBSYSTEMS IN DETAIL
+       11.1 Aerospike (rocket boost)
+       11.2 Propulsion (air-breathing engine)
+       11.3 MassModel (mass/inertia schedule)
+       11.4 RCS_ctrl (reaction control, exo-atmospheric)
+       11.5 Landing Gear
+       11.6 Aerodynamics (Aerovegamidfid)
+       11.7 Atmospheric (ISA)
+       11.8 EqM (6-DOF equations of motion = the plant)
+       11.9 Traj3D (live 3-D trajectory plot)
+12.  KEY PARAMETERS YOU WILL TUNE MOST OFTEN
+13.  TROUBLESHOOTING (known issues & fixes)
+14.  ANALYSIS / UTILITY SCRIPTS
+
+
+================================================================================
+0.  QUICK START
+================================================================================
+ In the MATLAB Command Window, from the project folder:
+
+     >> run('setup_fcs_sim.m')      % loads aircraft + all FCS params, sets ICs
+     >> sim('ACFT11_a_121')         % run (or press the green Run button)
+
+ Results land in the BASE WORKSPACE as time-series (see Section 4).
+ To watch it play at a controlled speed, enable pacing (Section 4).
+
+ That is the entire normal workflow. Everything below explains what those
+ two lines set up and how each piece works.
+
+
+================================================================================
+1.  FILE INVENTORY
+================================================================================
+ PRIMARY (run these):
+   setup_fcs_sim.m .......... MASTER setup. Loads aircraft config, calls
+                              fcs_params.m and setup_gschedule.m, chooses the
+                              run scenario, sets initial conditions, solver and
+                              logging. RUN THIS FIRST, EVERY TIME.
+   fcs_params.m ............. THE input/parameter file. Every gain, limit,
+                              threshold and set-point the FCS uses. (Section 3.)
+   setup_gschedule.m ........ Builds the INDI control-effectiveness (G-matrix)
+                              schedule from the aero tables. Called automatically
+                              by setup_fcs_sim.m.
+
+ MODEL-REGENERATION (run only when you change that subsystem's physics):
+   setup_propulsion.m ....... Regenerates the PropulsionFCN block (Mach-altitude
+                              thrust table for the air-breathing engines).
+   setup_landing_gear.m ..... Regenerates LandingGear_FCN (gear geometry, spring/
+                              damper rates, inertia) and writes it into the model.
+
+ ANALYSIS / UTILITY:
+   traj3d_plot.m ............ Live 3-D trajectory figure (called from the model
+                              via the Traj3D block). Auto-resets each run.
+   analyze_takeoff.m ........ Post-run plots/metrics for the takeoff segment.
+   Visualization_Takeoff2.m . Takeoff visualisation.
+   optimize_indi_gains.m .... Automated INDI pitch-gain optimiser (Section 10).
+   run_bfl_sweep.m / setup_bfl_analysis.m / analyze_bfl.m ...
+                              Balanced-field-length (takeoff) study tooling.
+   run_takeoff_sim.m ........ Stand-alone takeoff run.
+   restore_normal_fcs.m ..... Restores the model to the normal (native-block)
+                              FCS after an experiment/optimiser run.
+   inertiatensor62.m ........ Inertia-tensor helper.
+
+ LEGACY (older takeoff-only controller, superseded by the native-block FCS):
+   setup_takeoff_fcs.m ...... Setup for the old MATLAB-function Takeoff_FCS.
+
+ OUTPUT:
+   ACFT11_a_121.slx ......... The model itself.
+   USER_MANUAL.txt .......... This file.
+
+
+================================================================================
+2.  HOW TO RUN THE SIMULATION MANUALLY
+================================================================================
+ NORMAL FULL-MISSION RUN
+ -----------------------
+   1) Open MATLAB in the project folder (so all .m files are on the path).
+   2) >> run('setup_fcs_sim.m')
+         This does, in order:
+           a. Loads the aircraft configuration (mass, inertia, geometry, aero
+              derivatives, propulsion constants) into the base workspace.
+           b. Calls fcs_params.m  (all FCS gains/limits/thresholds).
+           c. Calls setup_gschedule.m (INDI G-matrix schedule from aero tables).
+           d. Sets the initial condition for the chosen RUN_MODE (default
+              'mission' = on the runway, V=0).
+           e. Configures solver (ode15s, variable step, MaxStep 0.05) and
+              logging, and sets StopTime.
+   3) >> sim('ACFT11_a_121')      % or press Run in the Simulink toolbar
+   4) Inspect results from the base workspace (Section 4) or the live 3-D plot.
+
+ IMPORTANT ORDERING RULES
+ ------------------------
+   * fcs_params.m MUST run before setup_gschedule.m (the schedule needs the
+     geometry/inertia constants). setup_fcs_sim.m already enforces this.
+   * setup_fcs_sim.m sets the 6-DOF integrator initial conditions by writing
+     InitialCondition DIRECTLY ON THE EqM INTEGRATOR BLOCKS via set_param -- NOT
+     through workspace variables. If you want a custom in-flight start, set those
+     block ICs AFTER running setup_fcs_sim.m, or it will overwrite them.
+   * If you edited the engine model, run setup_propulsion.m first; if you edited
+     the gear, run setup_landing_gear.m first; THEN run setup_fcs_sim.m.
+
+ RE-RUNNING
+ ----------
+   You can just call sim() again after a run. If you changed anything in
+   fcs_params.m, re-run setup_fcs_sim.m first so the new values reach the
+   workspace and the chart parameters.
+
+ EqM INTEGRATOR BLOCKS (for custom initial conditions)
+ -----------------------------------------------------
+   ACFT11_a_121/EqM/BodyVelocities/u_mps   forward body velocity  [m/s]
+   ACFT11_a_121/EqM/BodyVelocities/v_mps   lateral body velocity  [m/s]
+   ACFT11_a_121/EqM/BodyVelocities/w_mps   vertical body velocity [m/s]
+   ACFT11_a_121/EqM/EulerAngles/PHI_rad    roll angle   [rad]
+   ACFT11_a_121/EqM/EulerAngles/THETA_rad  pitch angle  [rad]
+   ACFT11_a_121/EqM/EulerAngles/PSI_rad    yaw/heading  [rad]
+   ACFT11_a_121/EqM/InertialData/XI_m      North position [m]
+   ACFT11_a_121/EqM/InertialData/YI_m1     East  position [m]
+   ACFT11_a_121/EqM/InertialData/ZI_m      Down  position [m]  (altitude = -ZI)
+   ACFT11_a_121/EqM/BodyRates/p_radps      roll rate  [rad/s]
+   ACFT11_a_121/EqM/BodyRates/q_radps      pitch rate [rad/s]
+   ACFT11_a_121/EqM/BodyRates/r_radps      yaw rate   [rad/s]
+
+
+================================================================================
+3.  THE INPUT / PARAMETER FILE  —  fcs_params.m
+================================================================================
+ This is THE single file you tune. It is organised in blocks; a tour:
+
+ SAMPLE TIME
+   FCS_dt = 0.01                 controller update (100 Hz).
+
+ REFERENCE GEOMETRY & INERTIA
+   FCS_S, FCS_b, FCS_c           wing area, span, chord (moment arms).
+   FCS_Ixx/Iyy/Izz/Ixz          inertia (auto-pulled from base if a heavier
+                                 config was loaded).
+
+ CONTROL EFFECTIVENESS (per rad, anchor @ alpha=2 deg)
+   FCS_Cm_de / FCS_Cl_da / FCS_Cn_dr    elevator/aileron/rudder derivatives;
+                                 scale the INDI G-matrix (live qbar scaling is
+                                 done inside the FCS).
+   FCS_Gmin_q/p/r               lower bounds on |G| (divide-by-zero guard at
+                                 very low qbar / high altitude).
+   FCS_qbar_lo / FCS_qbar_hi    control-authority fade-in window: INDI increment
+                                 is scaled by sat((qbar-lo)/(hi-lo),0,1) so the
+                                 surfaces carry no authority (and cannot wind up)
+                                 at low airspeed, fading in as speed builds.
+
+ INDI INNER-LOOP RATE GAINS (desired rate-loop bandwidth, 1/s)
+   FCS_Kp=6, FCS_Kq=5, FCS_Kr=4  roll/pitch/yaw rate loops.
+   FCS_Nfilt=20                  angular-accel derivative/washout filter BW.
+
+ ATTITUDE (ACAH) OUTER-LOOP GAINS
+   FCS_Ktheta=2  pitch attitude->q_cmd
+   FCS_Kphi=3    bank  attitude->p_cmd
+   FCS_Kbeta=2   sideslip->r_cmd (turn coordination)
+   FCS_yawdamp_wo=1   yaw-damper washout pole.
+
+ ENVELOPE PROTECTION LIMITS
+   FCS_alpha_prot=12 / FCS_alpha_max=16 deg   soft/hard AoA.
+   FCS_Nz_max=3 / FCS_Nz_min=-1 g             load factor.
+   FCS_bank_max=45 / FCS_bank_hard=60 deg.
+
+ RATE & COMMAND SATURATIONS
+   FCS_q_max=15, FCS_p_max=60, FCS_r_max=15 deg/s
+   FCS_theta_max=30, FCS_theta_min=-20 deg.
+
+ ACTUATOR LIMITS (deg) & RATE LIMITS (deg/s)
+   elevator 25 / 80 ; aileron 20 / 100 ; rudder 25 / 80.
+
+ TECS (longitudinal total-energy autopilot)
+   FCS_V_cmd / FCS_h_cmd         default speed/altitude targets.
+   FCS_TECS_Kti/Ktp              throttle integral/proportional (total energy).
+   FCS_TECS_Kei/Kep              pitch integral/proportional (energy balance).
+   FCS_thr_min=0 / FCS_thr_max=1 throttle clamp. NOTE: idle floor is 0 so TECS
+                                 can cut thrust fully for descent/landing.
+   FCS_Kh / FCS_hdot_max         altitude-error -> climb-rate demand + limit.
+   FCS_thr_trim / FCS_theta_trim integrator seeds.
+
+ LATERAL GUIDANCE
+   FCS_Kpsi, FCS_turn_bank       legacy heading-hold gains.
+   FCS_L1_tc=15 s                L1 look-ahead time constant (also hardcoded in
+                                 L1law): a_lat = (2V/L1_tc)*sin(eta). Smaller =
+                                 tighter/faster turns.
+
+ ENVELOPE-PROTECTION COMMAND GAINS
+   FCS_Kalpha, FCS_Kalpha_lim    AoA limiter gains.
+   FCS_Knz                       Nz limiter gain.
+
+ MISSION MANAGER SECTION (phase sequencer)  -- see Section 6
+   Longitudinal law enums: FCS_LAW_GROUND=0, _AIR=1, _FLARE=2, _PITCHHOLD=3,
+                           FCS_LAW_GAMMA=4 (flight-path hold).
+   Phase enums PH_* (1..17).
+   Transition thresholds & phase targets:
+     FCS_V_rotate=94, FCS_theta_LOF=10, FCS_q_rot=5, FCS_WoW_thresh=100,
+     FCS_h_gearsafe=50, FCS_V_climb=180, FCS_h_cruise=6000, FCS_V_cruise=180,
+     FCS_V_desc=120, FCS_h_approach=500, FCS_h_platform=800, FCS_loc_tol=1000,
+     FCS_gs_break=3000, FCS_v_decel_ref=6000, FCS_V_app=100, FCS_h_flare=30.
+   Flare (soft-landing) law:
+     FCS_h_gnd=2.24 (gear-contact datum), FCS_tau_flare=8 s,
+     FCS_hdot_td=0.3 m/s (touchdown sink floor), FCS_Kflare=1.0
+     ((deg/s)/(m/s) sink-error -> pitch-rate).
+   Rollout:
+     FCS_mu_brake=0.30 (full brakes), FCS_mu_roll=0.03 (rolling),
+     FCS_V_derotate=60, FCS_V_stop=2.
+
+ HIGH-SPEED MISSION GN&C
+   Guidance-mode enums GM_* and propulsion-mode enums PM_* (OFF/AB_DRY/AB_WET/
+   AEROSPIKE/AEROSPIKE_AB/IDLE).
+   Ascent set-points: FCS_h_ab_reignite=6000, FCS_M_target=2.4,
+     FCS_h_apogee_tgt=27000, FCS_h_relight=10000, FCS_Kgamma=1.5,
+     FCS_M_trans=0.95, FCS_gamma_zoom=24, FCS_gamma_glide=-4,
+     FCS_gamma_glide_shallow=3 / _steep=18, FCS_qbar_glide=5000,
+     FCS_gamma_coast=-8.
+   RTB: FCS_R_capture=100000, FCS_gs_capture_tol=50.
+   Timers: FCS_t_cruise1=20, FCS_t_sep=2, FCS_t_relight=5, FCS_t_burn=45.
+   Relight envelope (must be inside to relight): FCS_relight_M_lo=0.35,
+     FCS_relight_M_hi=2.0, FCS_relight_qbar=3000.
+   Aerospike: FCS_aerospike_thrust=250000 N (FIXED, on/off only), Isp=350 s.
+
+ MASS / INERTIA SCHEDULE
+   MASS_full=28500, MASS_empty=10800, MASS_orbiter=3000,
+   MASS_fuel_total~14700. FF_rates[] = fuel flow by PM_* mode.
+   INERTIA_full/separated/empty and the MASS_bp breakpoints for interpolation.
+
+ APPROACH PATH GUIDANCE (ILS)
+   FCS_GS_angle=3, FCS_FAF_dist=10000, FCS_app_capture_R=20000,
+   FCS_Kloc=0.8, FCS_loc_max_corr=20.
+   (The live glide-slope beam is actually two-segment; see Section 7.3 — those
+   angles live inside RTB_Guidance.)
+
+
+================================================================================
+4.  SCENARIO, SOLVER, LOGGING & PACING  —  setup_fcs_sim.m
+================================================================================
+ RUN_MODE (edit near the top of setup_fcs_sim.m):
+   'mission'  (default)  on the runway, V=0 -> full autonomous mission.
+                         Ground ICs: ZI=-2.24 m, THETA=2 deg, body vel=0.
+                         StopTime 1000 s (raise it for the full RTB+landing;
+                         a complete mission runs to ~2200 s).
+   'trim'                airborne start at cruise set-points (h=FCS_h_cmd,
+                         V=FCS_V_cmd) for a quick FCS trim/stability check.
+                         StopTime 60 s.
+
+ SOLVER (set by setup_fcs_sim.m):
+   ode15s, variable-step, RelTol 1e-3, AbsTol 1e-4, MaxStep 0.05 s.
+   AlgebraicLoopMsg='none' (an intentional Memory block breaks the
+   MissionManager<->MassModel<->LandingGear algebraic loop).
+
+ LOGGING:
+   ReturnWorkspaceOutputs='off' -> To-Workspace blocks write DIRECTLY to the
+   base workspace during sim(). Key logged variables (time-series unless noted):
+     phase .......... mission phase (1..18, see Section 6)
+     hlog ........... altitude [m]          Vlog ... true airspeed [m/s]
+     Machlog ........ Mach                  al_log . angle of attack [deg]
+     rng_log ........ range-to-home [m]     trk_log/brg_log .. track/bearing
+     TW_qbar, TW_Vz_est, TW_relight_ok, prop_mode, sep_cmd,
+     da_log/de_log/dr_log (surfaces), p/q_log2/r (rates),
+     plus logsout (Dataset: Qdyn, TAS, Alpha, Gamma, Track, theta, lat, lon,
+     altitude).
+   If a run is interrupted, these hold only the partial record -- re-run to
+   repopulate before analysing.
+
+ SIMULATION PACING (to watch the animation/3-D plot at a controlled speed):
+     set_param('ACFT11_a_121','EnablePacing','on');
+     set_param('ACFT11_a_121','PacingRate','20');   % simulation-s per wall-s
+   Higher PacingRate = faster. The model's natural compute speed is ~3-4x
+   real time, so a PacingRate well above that (e.g. 20) runs essentially at
+   full speed; a low value (e.g. 2-3) deliberately slows playback for viewing.
+   Pacing can only SLOW the run, never speed it beyond the solver's own rate.
+
+ NETWORK/ANIMATION BLOCKS:
+   The two FlightGear UDP blocks (Pack/Send net_fdm) are commented out
+   (disabled). They must stay disabled for headless/batch runs -- an active UDP
+   Send blocks the solver (it hangs around t~21 s waiting on the socket).
+
+
+================================================================================
+5.  TOP-LEVEL MODEL ARCHITECTURE
+================================================================================
+ The model is a classic plant + GN&C loop:
+
+   MissionManager (sequencer)
+        | law_select, prop_mode, command set-points (V_cmd,h_cmd,gamma_cmd,
+        | psi_cmd, gear/brake/sep cmds, phase)
+        v
+   Guidance  (GlideCompute, RTB_Guidance, L1law)  -> refined commands
+        v
+   FCS  (TECS + ACAH + INDI + HeadingHold + ModeManager + Pilot_RCAH)
+        | elevator / aileron / rudder / throttle commands
+        v
+   Propulsion (air-breathing)  +  Aerospike (rocket)  -> forces/moments
+   Aerovegamidfid (aero)  +  Landing Gear  +  RCS_ctrl -> forces/moments
+        v
+   EqM  (6-DOF equations of motion = the integrators = the plant state)
+        |  states: body vel/rates, Euler angles, NED position
+        v
+   Atmospheric (ISA) + Estimation (qbar, energy, sink, relight) + MassModel
+        |  feed back to Guidance / FCS / Sequencer
+        +--> Traj3D live plot
+
+ Each top-level block (blk id):
+   Aerospike(4106) Aerovegamidfid(4) Atmospheric(1) EqM(2) Estimation(4074)
+   FCS(3828) GlideCompute(4153) Landing Gear(3754) MassModel(4156)
+   MissionManager(4025) Propulsion(3) RCS_ctrl(4135) RTB_Guidance(4103)
+   Traj3D(4151).
+
+
+================================================================================
+6.  THE MISSION MANAGER  (Stateflow chart, blk_4025)
+================================================================================
+ A single Stateflow chart drives the entire mission as an 18-state machine.
+ On entry each state sets: phase (for logging), law_select (which longitudinal
+ control law the FCS uses), prop_mode (engine mode), and the command set-points
+ (V_cmd, h_cmd, gamma_cmd, psi_cmd, thr_cmd, gear_cmd, brake_cmd, sep_cmd).
+ The default transition enters GROUND_ROLL.
+
+ PHASE SEQUENCE, with entry actions and the guard that leaves each state:
+
+  1 GROUND_ROLL  throttle up, hold on gear.
+        -> ROTATION      when V >= Vr (FCS_V_rotate)
+  2 ROTATION     pitch up at q_rot to liftoff attitude.
+        -> LIFTOFF       when theta >= theta_LOF (or weight off wheels)
+  3 LIFTOFF      establish climb.
+        -> CLIMB1        when h >= h_gearsafe
+  4 CLIMB1       pitch-hold climb (LAW_PITCHHOLD), throttle max, to cruise alt.
+        -> CRUISE1       when h >= FCS_h_cruise
+  5 CRUISE1      TECS holds V_cruise / h_cruise; dwell.
+        -> ACCEL         after FCS_t_cruise1
+  6 ACCEL        afterburner, accelerate.
+        -> ZOOM          when Mach >= FCS_M_trans
+  7 ZOOM         aerospike ON, climb at gamma_zoom (24 deg).
+        -> SEPARATE      when h >= FCS_h_apogee_tgt (27 km)  [burn-timed]
+  8 SEPARATE     sep_cmd=1 (drop orbiter), thrust off, settle.
+        -> COAST         after FCS_t_sep
+ 18 COAST        ballistic nose-over at gamma_coast (-8 deg), engine off.
+        -> GLIDE         when [descending AND qbar >= FCS_qbar_glide]
+  9 GLIDE        energy-managed glide (LAW_GAMMA), gamma/psi from GlideCompute.
+        -> RELIGHT       when [h <= FCS_h_relight AND relight_ok]   (10 km, inside
+                          the Mach/qbar relight envelope)
+ 10 RELIGHT      air-breather relit (prop_mode=1), level off at h_relight,
+                 accelerate toward cruise, steer to bearing_home.
+        -> CRUISE_RTB    after FCS_t_relight
+ 11 CRUISE_RTB   TECS cruise home at V_cruise / h_cruise, steer bearing_home.
+        -> DESCEND_RTB   when range_home <= FCS_R_capture (100 km)
+ 12 DESCEND_RTB  descend to the PLATFORM (h_platform=800 m), steer the LOCALIZER
+                 (psi_cmd=loc_hdg_cmd) to line up on the runway centreline.
+        -> APPROACH      when the glide-slope beam descends to the aircraft AND
+                          lined up:
+                          [gs_alt_cmd <= h + FCS_gs_capture_tol  AND
+                           range_home <= FCS_app_capture_R        AND
+                           |xtrack_err| <= FCS_loc_tol]
+ 13 APPROACH     gear down, track the glide-slope beam down (h_cmd=app_h_cmd),
+                 localizer steering, speed eased V_desc->V_app over the steep
+                 segment so the shallow final is flown at a steady V_app.
+        -> FLARE         when h <= FCS_h_flare (30 m)
+ 14 FLARE        exponential sink-rate flare (LAW_FLARE), idle thrust.
+        -> TOUCHDOWN     when Ngear >= FCS_WoW_thresh (weight on wheels)
+ 15 TOUCHDOWN    derotate (q_rot_cmd=-2), brakes on (brake_cmd=FCS_mu_brake=0.3).
+        -> ROLLOUT       when V <= FCS_V_derotate
+ 16 ROLLOUT      nose down, full braking at mu=0.3.
+        -> STOPPED       when V <= FCS_V_stop
+ 17 STOPPED      parked, brakes held, engine off.
+
+ KEY STATEFLOW NOTES
+   * The chart is CONTINUOUS-time. Do NOT use min()/max()/abs()/if inside 'du:'
+     actions -- they expand to if-statements the continuous solver rejects
+     (pmIllegalRelationalExpression). Use smooth forms (sigmoids) or logical*
+     double products instead (e.g. the APPROACH speed ease uses a 1/(1+exp())
+     sigmoid).
+   * Boolean signals from compare blocks do NOT generate zero-crossing events in
+     a continuous chart, so transition guards that must fire on such a signal use
+     a DataTypeConversion boolean->double followed by '> 0.5' (e.g. relight_ok,
+     descending).
+   * Guard transitions fire on the SMOOTH signal's zero-crossing. Altitude-gated
+     guards (h <= threshold) are reliable because h is a smooth continuous state;
+     compound guards work because the smooth term drives the crossing.
+   * Chart PARAMETERS (FCS_*) resolve from the base workspace -- they are loaded
+     by fcs_params.m. New thresholds must be added BOTH as a chart Parameter data
+     item AND defined in fcs_params.m.
+
+
+================================================================================
+7.  GUIDANCE
+================================================================================
+ Guidance turns the sequencer's coarse intent into the exact gamma/psi/altitude/
+ speed references the FCS tracks. Three MATLAB-Function guidance blocks plus the
+ sequencer's own set-points.
+
+ 7.1  ASCENT GUIDANCE (inside the sequencer + LAW_GAMMA)
+   Climb, accel, zoom and coast are flown as flight-path (gamma) commands:
+     q_cmd = FCS_Kgamma * (gamma_cmd - gamma)   [the FCS_LAW_GAMMA law]
+   ZOOM uses gamma_zoom=24 deg with the aerospike lit; the apogee (~27 km,
+   ~Mach 2.3 at separation) is shaped by pitch/gamma, NOT by throttling the
+   rocket (the aerospike is fixed-thrust on/off). COAST flies gamma_coast=-8 deg
+   (gentle ballistic nose-over) because above ~FCS_qbar_glide the air is too thin
+   for aero control; RCS_ctrl holds attitude up there (Section 11.4).
+
+ 7.2  GlideCompute  (blk_4153)
+   Inputs : h, range_home, bearing_home, gs_alt_cmd
+   Outputs: glide_gamma_cmd, glide_psi_cmd, app_h_cmd
+   * Energy glide: raw_gamma = atan2(h - h_relight, range+1000); a smooth
+     (atan) saturation clamps the commanded descent flight-path between
+     gamma_shallow(3 deg) and gamma_steep(18 deg) -- shallow when far from the
+     relight point (max range), steep when high/close (dissipate energy). Sign is
+     negative (descent). This is what phase GLIDE tracks.
+   * glide_psi_cmd = bearing_home * gate, where the gate is a sigmoid in altitude
+     (~19 km) so the vehicle only starts steering home once low enough for the
+     lateral loop to be effective.
+   * app_h_cmd = smooth-max(gs_alt_cmd, h_flare) -- the glide-slope altitude
+     command used by APPROACH, floored softly at the flare height so it never
+     commands below the runway.
+
+ 7.3  RTB_Guidance  (blk_4103)   ILS-style localizer + glide slope
+   Input  : pos_NED
+   Outputs: range_home, bearing_home, xtrack_err, along_track, gs_alt_cmd,
+            loc_hdg_cmd
+   Runway reference: threshold at the NED origin; rwy_hdg = 180 deg (the vehicle
+   flies out and returns from the NORTH, so the approach/landing runs south ->
+   rwy_hdg=180 makes along_track = +posN > 0; with rwy_hdg=0 the beam would be
+   clamped to zero on this geometry).
+     along_track = distance from threshold along the runway centreline.
+     xtrack_err  = lateral offset from the centreline.
+   * TWO-SEGMENT GLIDE SLOPE (the live beam):
+       if along_track <= R_break(3000 m):  gs_alt_cmd = along_track*tan(2.5 deg)
+       else: gs_alt_cmd = R_break*tan(2.5) + (along_track-R_break)*tan(4.0 deg)
+     i.e. a 4 deg steep segment far out, easing to a 2.5 deg shallow final inside
+     3 km for a gentle touchdown. (The steep angle is held at ~4 deg because, with
+     gear down and the idle thrust floor at 0, that is about the steepest the
+     aircraft can actually track; 5 deg made it lag high and land long.)
+   * LOCALIZER:
+       loc_corr   = -FCS_Kloc_internal * xtrack_err  (clamped +-20 deg)
+       loc_hdg_cmd = rwy_hdg + loc_corr
+     The sign drives the aircraft TOWARD the centreline (east-of-centre turns
+     west, and vice-versa); the internal gain is deliberately gentle (0.02 deg/m)
+     so it rolls out smoothly onto the centreline instead of bang-banging. The
+     localizer is active from DESCEND_RTB so the aircraft is aligned BEFORE the
+     final approach.
+
+ 7.4  L1law  (inside HeadingHold, blk_4123)   lateral-acceleration guidance
+   phi = L1law(psi_cmd, track, V, qbar)
+   * a_lat = (2V/L1_tc)*sin(eta), eta = heading error (wrapped). For |eta|>90 deg
+     the command saturates at full a_lat with the correct sign (fixes the 180-deg
+     saddle point so the vehicle always turns the short way).
+   * phi_raw = atan2(a_lat, g); then scaled by qbar/5000 (clamped 0.05..1) so at
+     high altitude/low qbar the bank command is reduced -- this stops the INDI
+     saturating and stalling the solver when controls are weak.
+
+
+================================================================================
+8.  ESTIMATION  (blk_4074)
+================================================================================
+ Produces the derived signals the sequencer and guidance need:
+   E_spec     specific energy (h + V^2/2g) for TECS / energy management.
+   qbar       dynamic pressure (0.5 rho V^2) -- gates glide handoff, relight,
+              control-authority fade, L1 scaling.
+   Vz         vertical speed estimate (sink rate) -- used by the flare law.
+   descending boolean (-> double): true when sinking; gates COAST->GLIDE.
+   relight_ok boolean (-> double): the air-breather relight envelope =
+                (Mach >= FCS_relight_M_lo) AND (Mach <= FCS_relight_M_hi)
+                AND (qbar >= FCS_relight_qbar).
+              Combined with the h<=FCS_h_relight altitude gate in the sequencer,
+              this is what permits GLIDE->RELIGHT. The envelope values
+              (M 0.35..2.0, qbar>=3000) are matched to the actual Mach (~0.46)
+              and qbar (~3800 Pa) the vehicle has when it glides through 10 km.
+
+
+================================================================================
+9.  THE CONTROLLER STRUCTURE  (FCS, blk_3828)
+================================================================================
+ The FCS is a cascaded, dynamic-pressure-scheduled design:
+
+     commands (V,h,gamma,psi, attitude)
+        -> OUTER loops (TECS long., ACAH attitude, HeadingHold/L1 lateral)
+        -> produce body-RATE commands (p_cmd,q_cmd,r_cmd) and throttle
+        -> INNER loop (INDI) inverts the plant to produce surface deflections.
+
+ 9.1  INDI INNER RATE LOOP  (INDI_Inner, blk_3855)
+   Incremental Nonlinear Dynamic Inversion. For each axis:
+       nu   = K_rate * (rate_cmd - rate)        (desired angular accel)
+       Dsurf = (nu - filtered_angular_accel) / G
+       surf  = surf_prev + Dsurf                (incremental)
+   * K_rate = FCS_Kp / FCS_Kq / FCS_Kr (roll/pitch/yaw rate-loop bandwidths).
+   * G is the live control effectiveness: scheduled G-coefficient (from the aero
+     tables, see 10.1) multiplied by live qbar. Clamped away from zero by
+     FCS_Gmin_* and, at the low end, faded by the qbar_lo..qbar_hi window so the
+     loop carries no authority (and cannot integrator-wind-up) at low speed.
+   * The angular acceleration is estimated through a derivative/washout filter of
+     bandwidth FCS_Nfilt. Surfaces are magnitude- and rate-limited
+     (FCS_de/da/dr_max, _rate).
+   Being incremental, INDI is robust to model error -- it only needs the SIGN and
+   rough magnitude of G, which is why the schedule (not exact aero) suffices.
+
+ 9.2  ATTITUDE COMMAND (ACAH)  (Attitude_ACAH, blk_3903)
+   Attitude-Command / Attitude-Hold outer loop -> rate commands for INDI:
+       q_cmd = FCS_Ktheta * (theta_cmd - theta)
+       p_cmd = FCS_Kphi   * (phi_cmd   - phi)
+       r_cmd = FCS_Kbeta  * (0 - beta)  + yaw-damper(washout FCS_yawdamp_wo)
+   Rate commands are clamped to FCS_q/p/r_max.
+
+ 9.3  TECS  (TECS, blk_3899)   longitudinal total-energy autopilot
+   Controls SPEED and ALTITUDE together by managing total energy and its
+   distribution:
+       throttle  <- total-energy error  (Kti integral + Ktp proportional)
+       pitch/q   <- energy-BALANCE error (Kei integral + Kep proportional)
+   Altitude error becomes a climb-rate demand via FCS_Kh (limited by
+   FCS_hdot_max). Throttle clamps to [FCS_thr_min=0, FCS_thr_max=1]; the zero
+   idle floor is essential so TECS can cut thrust to descend and land.
+
+ 9.4  HEADINGHOLD / L1  (HeadingHold, blk_3900)
+   Converts a heading/track command into a bank command via L1law (Section 7.4),
+   which ACAH then holds. Replaces a plain proportional heading-hold with a
+   lateral-acceleration law for cleaner turns and a correct short-way turn.
+
+ 9.5  MODEMANAGER & THE LONGITUDINAL LAW SWITCH  (ModeManager, blk_3902)
+   law_select (set by the sequencer) routes the pitch-rate command through a
+   5-way switch (q_law_switch):
+       0 GROUND   : q_cmd = q_rot_cmd (rotate/derotate on the ground)
+       1 AIR      : ACAH/TECS pitch (cruise, climb-capture, approach)
+       2 FLARE    : exponential sink-rate flare law (see below)
+       3 PITCHHOLD: ACAH holds theta_climb (initial climb)   [maps to ACAH]
+       4 GAMMA    : flight-path hold, q_cmd = Kgamma*(gamma_cmd - gamma)
+   A matching 5-way throttle switch (thr_law_switch) selects throttle source
+   (ground thr_cmd / TECS / idle for flare / etc.). ModeManager also handles the
+   datalink failsafe (FCS_MODE_AUTO/STABILIZE, FCS_link_timeout).
+
+   THE FLARE LAW (law_select=2):
+       sink_cmd = max( h_agl / FCS_tau_flare ,  FCS_hdot_td )   (exponential
+                   decay of commanded sink, floored at the soft touchdown sink)
+       q_cmd    = FCS_Kflare * ( -sink_cmd - Vz )
+     i.e. pitch-rate proportional to sink-rate error -- an exponential flare.
+     FCS_Kflare was reduced from 3 to 1 and FCS_h_flare raised to 30 m because a
+     high gain made the sink/pitch loop under-damped (it porpoised, alpha swinging
+     6-15 deg). If it still oscillates, lower Kflare further or add a pitch-rate
+     damping term.
+
+ 9.6  PILOT_RCAH  (Pilot_RCAH, blk_3901)
+   Remote-pilot Rate-Command/Attitude-Hold path: out-of-detent stick -> rate
+   command (FCS_stick_q/p_scale); in-detent (|stick|<FCS_stick_detent) -> attitude
+   HOLD. Used only in STABILIZE mode; AUTO mode ignores it.
+
+ 9.7  ENVELOPE PROTECTION
+   Always active in AUTO: soft/hard AoA limiting (push nose down above
+   FCS_alpha_prot, hard stop at FCS_alpha_max via FCS_Kalpha/_Kalpha_lim), load
+   factor (FCS_Nz_min..max via FCS_Knz) and bank limiting (FCS_bank_max/_hard).
+
+
+================================================================================
+10.  HOW OPTIMUM GAINS ARE FOUND
+================================================================================
+ 10.1  INDI G-MATRIX SCHEDULE  (setup_gschedule.m)  -- the "effectiveness"
+   The inner-loop inversion needs the control effectiveness G(alpha,Mach). Rather
+   than a single anchor, setup_gschedule.m reads the model's OWN aero lookup
+   tables:
+       Cm_elev (blk 4:302), Cl_AilT (blk 4:310), Cn_rudder (blk 4:362)
+   and folds in geometry/inertia to publish the G-COEFFICIENT tables:
+       GS_Gq_tab = Cm_de * (S*c/Iyy)       (pitch)
+       GS_Gp_tab = Cl_da * (S*b/Ixx)       (roll)
+       GS_Gr_tab = Cn_dr * (S*b/Izz)       (yaw)
+   plus the alpha/Mach breakpoints. The scheduled Lookup blocks inside
+   INDI_Inner output G(alpha,Mach); the FCS then multiplies by live qbar to get
+   the instantaneous G. This keeps the inversion matched to the plant across the
+   whole envelope and AUTO-SYNCS if you change the aero tables. Run it (via
+   setup_fcs_sim.m) after fcs_params.m.
+
+ 10.2  AUTOMATED GAIN OPTIMISER  (optimize_indi_gains.m)
+   A two-stage optimiser for the pitch inner-loop gains (K_q, N_filt) that
+   minimises a weighted cost over a 45 s takeoff horizon:
+       Cost = W_TRACK*RMS(q error)
+            + W_SMOOTH*RMS(elevator rate)      <- primary anti-chatter term
+            + W_OVER*peak(q overshoot)
+       defaults W_TRACK=1.0, W_SMOOTH=1.5, W_OVER=0.3 (favour smoothness).
+   Stage 1: 4x3 coarse grid over K_q in {2,3.5,5,7} and N_filt in {5,10,20}.
+   Stage 2: fminsearch refinement from the grid winner (gains clipped to
+            physically sensible bounds).
+   Stage 3: injects the best gains and saves the model.
+   NOTE: this script was written for the legacy MATLAB-function Takeoff_FCS and
+   tunes that block. The current native-block FCS keeps its gains in fcs_params.m
+   (FCS_Kp/Kq/Kr, FCS_Nfilt, FCS_Ktheta/Kphi/Kbeta, TECS gains). The SAME method
+   applies -- sweep a gain, score tracking vs. actuator smoothness vs. overshoot,
+   pick the knee -- just edit fcs_params.m and re-run setup_fcs_sim.m each trial.
+
+ 10.3  MANUAL TUNING ORDER (recommended)
+   1. Inner INDI rate loops first (FCS_Kp/Kq/Kr, FCS_Nfilt): aim for fast, well-
+      damped rate tracking with smooth surfaces. Use the 'trim' scenario.
+   2. ACAH attitude gains (FCS_Ktheta/Kphi/Kbeta): crisp attitude capture, no
+      oscillation.
+   3. TECS (Kti/Ktp energy, Kei/Kep balance, Kh): speed/altitude capture with
+      coordinated throttle+pitch, no speed/altitude fighting.
+   4. Lateral L1 (FCS_L1_tc) and localizer gentleness.
+   5. Phase-specific laws (gamma gains, flare Kflare/tau, glide-slope angles)
+      against the full mission.
+   Tune the inner loops before the outer loops; a loose inner loop makes every
+   outer loop look bad.
+
+
+================================================================================
+11.  SUBSYSTEMS IN DETAIL
+================================================================================
+
+ 11.1  AEROSPIKE  (Aerospike, blk_4106)   rocket boost
+   [F6, T_aero] = AerospikeThrust(prop_mode, T_max)
+   Fixed-magnitude rocket thrust, commanded ON/OFF by the sequencer's prop_mode:
+   ON for PM_AEROSPIKE(3) or PM_AEROSPIKE_AB(4), else OFF. Thrust acts along body
+   +x through the CG (no thrust-vector moment). T_max = FCS_aerospike_thrust
+   (250 kN placeholder). Propellant depletion is NOT modelled here (the MassModel
+   handles mass via fuel-flow). The zoom apogee is shaped by pitch/gamma, not by
+   throttling the rocket (it cannot be throttled).
+
+ 11.2  PROPULSION  (Propulsion/PropulsionFCN, blk_3)   air-breathing engine
+   y = PropulsionFCN(Mach, rho, Throttle)   -> [Fx;0;Fz;0;My;0; Thrust]
+   Two-engine Mach-x-altitude thrust table (one engine at throttle=1), bilinear-
+   interpolated and clamped at the table edges; altitude is recovered from rho by
+   an inverse-ISA. Thrust = max(0, Throttle * 2 * T_1eng). At Throttle=0 the model
+   gives ZERO thrust -- the only "idle" thrust comes from the TECS throttle clamp
+   FCS_thr_min (now 0, so no residual idle thrust holding the descent up).
+   The block is AUTO-GENERATED by setup_propulsion.m -- edit that script (engine
+   count, SL static thrust, table) and re-run it, do not hand-edit the block.
+   Engine incidence alfaf=-1.8 deg, thrust-line z-offset handled in the My term.
+
+ 11.3  MASSMODEL  (MassModel, blk_4156)   mass/inertia schedule
+   [mass_kg, Inertia] = MassModel(fuel_burned, sep_cmd)
+   mass = MASS_full - fuel_burned, minus MASS_orbiter once sep_cmd latches true
+   (orbiter jettisoned at SEPARATE), floored at MASS_empty. Inertia is a 3-point
+   interpolation over mass (MASS_bp breakpoints: empty / separated / full) of
+   Ixx,Iyy,Izz,Ixz, clamped at the breakpoint ends. fuel_burned is the integral
+   of the fuel-flow rate FF_rates(prop_mode). The block runs at a DISCRETE 0.05 s
+   sample time (its persistent 'separated' latch is incompatible with a
+   continuous rate), and a Memory block breaks the sequencer<->mass<->gear
+   algebraic loop. Fuel-flow by mode: OFF 0, AB_DRY 2.5, AB_WET 5.0,
+   AEROSPIKE 73, AEROSPIKE_AB 78, IDLE 0.5 kg/s.
+
+ 11.4  RCS_CTRL  (RCS_ctrl, blk_4135)   exo-atmospheric reaction control
+   F6 = RCS_ctrl(alpha, phi, beta, p, q, r, qbar, h)
+   A second-order attitude regulator (wn=1, zeta=0.8) that commands body MOMENTS
+   to drive alpha->0, wings-level, zero-sideslip during the high coast, where the
+   air is too thin for aero surfaces. Moments are clamped to the RCS authority
+   (placeholder 50/120/120 kN*m). GATED: active only above h=15 km AND faded out
+   as qbar builds from 1000->6000 Pa, so it never fires in dense air -- the aero
+   surfaces take over below. This is what keeps the vehicle tracking its velocity
+   vector through the coast instead of tumbling / mushing to huge alpha.
+
+ 11.5  LANDING GEAR  (Landing Gear/LandingGear_FCN, blk_3754)
+   [GndForces, N_total, N_gears] = LandingGear_FCN(Euler, VB, rates, pos, mass, mu)
+   Three-leg (nose + two main) spring-damper with a ONE-SIDED damper (no tension
+   when extending). Compression per leg from the body-to-earth rotation and gear
+   arm vectors; normal force = k*d + c*compression_rate (>=0). Friction =
+   mu * N opposing forward motion, with mu = mu_cmd from the sequencer
+   (FCS_mu_roll=0.03 rolling, FCS_mu_brake=0.30 full brakes). N_total feeds the
+   weight-on-wheels logic (FCS_WoW_thresh). Geometry/stiffness are generated by
+   setup_landing_gear.m -- re-run it if you change gear layout or aircraft mass.
+
+ 11.6  AERODYNAMICS  (Aerovegamidfid, blk_4)
+   Coefficient build-up (Cx,Cz,CY,Cl,Cm,Cn) from (alpha,Mach) lookup tables plus
+   control-surface and rate derivatives, resolved stability->body at the 25% MAC
+   and summed into forces/moments about the CG. The per-radian control
+   derivatives Cm_elev / Cl_AilT / Cn_rudder are the tables setup_gschedule.m
+   reads to build the INDI G-schedule, so controller and plant stay consistent.
+
+ 11.7  ATMOSPHERIC  (Atmospheric, blk_1)
+   ISA atmosphere (rho, T, a, p vs altitude), TAS/CAS conversion, and the dynamic
+   pressure the whole stack keys off. Altitude limited to the ISA-valid range.
+
+ 11.8  EqM  (EqM, blk_2)   6-DOF equations of motion = THE PLANT
+   Flat-earth 6-DOF: integrates body velocities (BodyVelocities), body rates
+   (BodyRates), Euler angles (EulerAngles) and NED position (InertialData) from
+   the summed external forces/moments (ExtForcesMoments = aero + propulsion +
+   aerospike + gear + RCS). TrajectoryData exposes derived trajectory outputs.
+   The integrator InitialCondition fields are the simulation's start state
+   (Section 2). Flat-earth is intentional for this demo (no ECEF/round-earth).
+
+ 11.9  TRAJ3D  (Traj3D, blk_4151 -> traj3d_plot.m)
+   A live 3-D North/East/Altitude trajectory figure, updated during the run and
+   auto-reset at the start of each new run (detects the fresh ground start). The
+   green marker is the runway/home origin; the red marker is the vehicle.
+
+
+================================================================================
+12.  KEY PARAMETERS YOU WILL TUNE MOST OFTEN
+================================================================================
+ Ascent profile:  FCS_gamma_zoom, FCS_t_burn, FCS_M_trans, FCS_h_apogee_tgt,
+                  FCS_aerospike_thrust.
+ Relight:         FCS_h_relight, FCS_relight_M_lo/_M_hi/_qbar, FCS_t_relight.
+ Return cruise:   FCS_h_cruise, FCS_V_cruise, FCS_R_capture.
+ Descent/platform:FCS_V_desc, FCS_h_platform.
+ Glide slope:     (in RTB_Guidance) gs_steep=4, gs_shallow=2.5, R_break=3000;
+                  FCS_app_capture_R, FCS_gs_capture_tol, FCS_loc_tol,
+                  FCS_v_decel_ref, FCS_V_app.
+ Flare/landing:   FCS_h_flare, FCS_tau_flare, FCS_hdot_td, FCS_Kflare,
+                  FCS_WoW_thresh, FCS_V_derotate, FCS_V_stop, FCS_mu_brake.
+ Inner FCS:       FCS_Kp/Kq/Kr, FCS_Nfilt, FCS_Ktheta/Kphi/Kbeta,
+                  FCS_TECS_* , FCS_L1_tc.
+ Authority fade:  FCS_qbar_lo/_hi, FCS_Gmin_*.
+
+
+================================================================================
+13.  TROUBLESHOOTING  (issues seen during development & their fixes)
+================================================================================
+ * Sim hangs around t ~ 21 s: the FlightGear UDP "Send net_fdm" block is active
+   and blocking on the socket. Keep both FlightGear blocks commented out for
+   batch/headless runs.
+ * A parameter reads empty / "Not enough input arguments": a workspace variable
+   was cleared or a typo crept into fcs_params.m -- re-run setup_fcs_sim.m. (The
+   common-named 'c' chord variable is easy to clobber; setup reloads it.)
+ * ICs ignored / vehicle starts on the ground when you wanted in-flight: the EqM
+   integrator block ICs are set by set_param, and setup_fcs_sim.m overwrites them
+   for the chosen RUN_MODE. Set custom ICs AFTER running setup, or add a mode.
+ * MassModel errors on a continuous rate: it must stay at its 0.05 s discrete
+   sample time (persistent latch). Do not make it continuous.
+ * Stateflow "pmIllegalRelationalExpression": you used min/max/abs/if in a
+   continuous-chart 'du:' action. Replace with a smooth (sigmoid) or logical*
+   double form.
+ * A transition never fires although its condition is true: in a continuous chart
+   a boolean signal gives no zero-crossing. Convert boolean->double and guard with
+   '> 0.5', and make sure a SMOOTH signal (e.g. h) drives the crossing.
+ * Relight never happens: the relight envelope (Mach/qbar) and the altitude gate
+   must overlap. The vehicle is ~Mach 0.46 / qbar ~3800 Pa at 10 km, so the
+   envelope is set M 0.35..2.0, qbar>=3000.
+ * Aircraft can't descend / overshoots the runway: with the engine running there
+   was a residual idle thrust (old FCS_thr_min=0.05 -> ~6.5 kN) and there is NO
+   speedbrake, so the steepest sustainable descent was limited. FCS_thr_min=0
+   lets TECS cut thrust fully. Also keep the glide-slope steep segment near the
+   trackable limit (~4 deg with gear down).
+ * Flare porpoises (sink and alpha oscillate): the flare pitch-rate gain
+   FCS_Kflare was too high -- it is now 1.0 with FCS_h_flare=30. Lower further or
+   add pitch-rate damping if needed.
+ * Solver "nonlinear iteration not converging at hmin": usually a commanded step
+   discontinuity (e.g. a large h_cmd/V_cmd jump at a phase change) or passing
+   through the home singularity (range->0) at altitude. Smooth the command and
+   make sure the descent geometry brings the vehicle to the threshold low.
+ * Tool/call times out on a long run: a full mission to touchdown is ~2200 s of
+   model time; just let it finish (or raise your MCP/tool idle timeout). The data
+   still lands in the base workspace.
+
+
+================================================================================
+14.  ANALYSIS / UTILITY SCRIPTS
+================================================================================
+ analyze_takeoff.m ........ takeoff metrics/plots from the last run.
+ Visualization_Takeoff2.m . takeoff visualisation.
+ run_takeoff_sim.m ........ stand-alone takeoff run.
+ setup_bfl_analysis.m / run_bfl_sweep.m / analyze_bfl.m ...
+                            balanced-field-length sweep + analysis.
+ restore_normal_fcs.m ..... put the model back to the normal native FCS after an
+                            experiment or the optimiser.
+ traj3d_plot.m ............ the live 3-D trajectory figure (auto-called).
+
+ To analyse a landing: run the full mission (StopTime ~2400 s), then read phase,
+ hlog, Vlog, rng_log and the surface/rate logs from the base workspace, or add a
+ Simulation Data Inspector run.
+
+================================================================================
+ END OF MANUAL
+================================================================================
