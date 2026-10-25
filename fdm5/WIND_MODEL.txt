@@ -1,0 +1,256 @@
+================================================================================
+ ACFT11_a_121  —  ATMOSPHERIC WIND / TURBULENCE MODEL
+ Implementation & Setup Guide
+================================================================================
+ Subsystem : ACFT11_a_121/WindModels
+ Library   : Aerospace Blockset  (aerolibwind2, aerolibtransform)
+ Injects   : body-frame air-relative wind into the Atmospheric block
+ Parameters: fcs_params.m  (WIND_* block, loaded by setup_fcs_sim.m)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+0.  TL;DR  (how to use it)
+--------------------------------------------------------------------------------
+ * The wind is already built, wired, and ON. Running the model normally
+   (run('setup_fcs_sim.m'); sim('ACFT11_a_121')) includes wind automatically.
+ * To TUNE magnitudes/direction/gust: edit the WIND_* values in fcs_params.m,
+   then re-run setup_fcs_sim.m.
+ * To change turbulence SEVERITY: set the mask 'TurbProb' on the Dryden block
+   (Light / Moderate / Severe).
+ * To TURN WIND OFF entirely: set the Dryden block 'T_on' = 'off' AND set
+   WIND_W20 = 0 (kills turbulence + shear mean); or bypass the WindModels output.
+ * To change WHICH PHASES/ALTITUDES get wind: edit the Scheduler function.
+
+
+--------------------------------------------------------------------------------
+1.  WHY / WHAT ENTERS THE PLANT
+--------------------------------------------------------------------------------
+ Wind changes the AIR-RELATIVE velocity the aircraft feels, which drives the
+ aerodynamics (alpha, beta, dynamic pressure, Mach). The 6-DOF equations of
+ motion (EqM) still integrate the INERTIAL (ground) velocity; only the air data
+ sees the wind:
+
+     V_airrelative(body) = V_body(ground)  +  Wind(body)
+
+ The Atmospheric block already had this sum built in. Its "Body_Wind" input was
+ previously a hard-wired zero; the WindModels subsystem now supplies it. So alpha
+ / beta / qbar / Mach — and therefore every aerodynamic force and moment —
+ respond to the wind, while the trajectory integration stays in ground axes.
+
+
+--------------------------------------------------------------------------------
+2.  ARCHITECTURE  (ACFT11_a_121/WindModels)
+--------------------------------------------------------------------------------
+ INPUTS (tapped from existing model signals):
+   h     altitude [m]            (from the altitudem signal, = -Z_NED)
+   V     airspeed proxy [m/s]    (EqM ground speed; avoids a wind<->airspeed
+                                  algebraic loop. Clamped to >=1 m/s by 'Vclamp'
+                                  so the turbulence filters are well-posed at
+                                  the V=0 ground start.)
+   DCM   earth->body 3x3         (from a Euler Angles -> Direction Cosine Matrix
+                                  block 'EulerDCM' fed by the EqM Euler angles)
+   qbar  dynamic pressure [Pa]   (from Estimation, via a Memory block to break
+                                  the algebraic loop)
+   phase mission phase 1..17     (from MissionManager, via a Memory block)
+
+ OUTPUTS:
+   WindBody   [3x1]  total body-frame wind velocity -> Atmospheric air data
+   GustRates  [3x1]  body-frame turbulence angular rates (p,q,r gusts)
+                     (currently terminated; reserved to drive the aero rate
+                      terms for full rotational-gust fidelity — see sect. 7)
+
+ INTERNAL BLOCKS:
+   WindShear   (Aerospace Blockset 'Wind Shear Model')
+               low-altitude boundary-layer MEAN wind + shear (log profile).
+               inputs: h, DCM   output: shear wind (body)
+   Turb        (Aerospace Blockset 'Dryden Wind Turbulence Model (Discrete
+               (+q +r))')  continuous-spectrum turbulence sampled at a fixed
+               rate; outputs translational gust velocities AND rotational gust
+               rates.  inputs: h, V(clamped), DCM   outputs: vel(body), rates(body)
+   DiscreteGust(Aerospace Blockset 'Discrete Wind Gust Model')
+               single 1-cosine gust event.  input: V(clamped)  output: gust(body)
+   MeanWind    (MATLAB Function) upper-level jetstream mean wind (NED), Gaussian
+               in altitude.  input: h   output: W_ned
+   MeanToBody  (Matrix Product) rotates MeanWind NED -> body via DCM.
+   Scheduler   (MATLAB Function) intensity gains [gTurb; gGust; gShear] from
+               qbar, phase, h.
+   pTurb/pShear/pGust/pRate  scale each component by its scheduler gain.
+   sWind       sum: WindBody = MeanBody + gShear*shear + gTurb*turb + gGust*gust
+   Vclamp      saturation [1, inf] on V feeding the turbulence/gust blocks.
+
+ SIGNAL FLOW:
+   h,V,DCM ---> WindShear/Turb/DiscreteGust ---> (xScheduler gains) --+
+   h ---> MeanWind ---> (xDCM) MeanBody ----------------------------> SUM ---> WindBody
+   qbar,phase,h ---> Scheduler ---> [gTurb;gGust;gShear]
+   Turb rates ---> (xgTurb) ---> GustRates
+
+
+--------------------------------------------------------------------------------
+3.  SCHEDULING  (the Scheduler function)  — WHEN each effect is active
+--------------------------------------------------------------------------------
+ g = [gTurb; gGust; gShear], each 0..1:
+
+   fq   = saturate((qbar - 200) / (5000 - 200), 0, 1)     % dynamic-pressure fade
+   fa   = saturate((20000 - h)  / (20000 - 15000), 0, 1)  % altitude cap
+   base = fq * fa
+   on_gust = (phase 1..4) OR (phase 6..7) OR (phase 13..15)
+   gTurb  = base
+   gShear = base
+   gGust  = base * on_gust
+
+ Meaning:
+   * fq  : wind fades IN as the aircraft gains speed/air density (0 below
+           qbar=200 Pa, full at qbar>=5000 Pa) and fades OUT as it slows.
+   * fa  : wind is full below 15 km, ramps to zero by 20 km, and is OFF above
+           20 km (thin air — the coast / RCS regime, where aero wind is
+           meaningless).
+   * gust: the 1-cosine discrete gust only passes during takeoff (1-4), the
+           transonic accel/zoom window (6-7), and approach/flare/touchdown
+           (13-15).
+   * The MEAN jetstream (MeanWind) is NOT phase-gated — it is a pure altitude
+     Gaussian (peak at 11 km) so it is only significant between ~7-15 km,
+     whatever the phase.
+
+
+--------------------------------------------------------------------------------
+4.  COMPONENTS & DEFAULT MAGNITUDES
+--------------------------------------------------------------------------------
+ Set in fcs_params.m (WIND_* block) and the Dryden block mask:
+
+   Low-altitude mean + CROSSWIND SHEAR   (Wind Shear Model)
+       WIND_W20   = 9.0 m/s   wind at 6 m (20 ft)
+       WIND_Wdeg  = 90 deg    direction wind blows FROM
+                              (90 = from east = crosswind on the N-S runway)
+       (log profile: strong near ground, tapers with altitude; scaled by 'base')
+
+   TURBULENCE   (Discrete Dryden (+q +r))
+       severity   = mask 'TurbProb' = Moderate (MIL 10^-3)   [Light/Mod/Severe]
+       WIND_Lhigh = 762 m     turbulence scale length at high altitude
+       Wingspan   = FCS_b     ts = 0.02 s (discrete update)
+       (MIL-F-8785C intensity vs altitude built into the block; scaled by 'base')
+
+   DISCRETE GUST   (1-cosine)
+       WIND_gust_amp = [3.5 3.5 3.0] m/s   peak gust velocities [x y z]
+       WIND_gust_len = [120 120 80] m      gust lengths [x y z]
+       WIND_gust_t0  = 5.0 s               start time (fires once)
+       (scaled by 'base' AND gated to takeoff/transonic/approach-land phases)
+
+   JETSTREAM mean   (MeanWind function, hardcoded — edit the function to change)
+       Wjet   = 35 m/s   peak speed increment
+       h_jet  = 11000 m  core altitude
+       sig    = 3500 m   half-width
+       dir    = 270 deg  from west
+       (Gaussian in altitude; added everywhere but ~0 outside ~7-15 km)
+
+
+--------------------------------------------------------------------------------
+5.  PER-PHASE SUMMARY
+--------------------------------------------------------------------------------
+ Phase                 Alt          Shear+Turb        Gust  Jetstream  Net
+ 1-3 GROUND/ROT/LIFTOFF ~0 m        fading in (qbar)   yes   -         crosswind + gust (takeoff)
+ 4   CLIMB1            0->6 km      full               yes   -         crosswind+turb+gust
+ 5   CRUISE1           6 km         full               no    -         crosswind+turb
+ 6-7 ACCEL/ZOOM        6->27 km     full -> OFF>20km   yes   peak@11km transonic gust+jetstream
+ 8   SEPARATE          27 km        OFF (>20 km)       no    -         calm (thin air)
+ 18  COAST             27 km        OFF                no    -         calm
+ 9   GLIDE             27 km->down  back ON <20 km     no    @11 km    turb returns; jetstream
+ 10  RELIGHT           ~10 km       full               no    near peak turb + jetstream
+ 11  CRUISE_RTB        6 km         full               no    -         crosswind+turb
+ 12  DESCEND_RTB       6->0.8 km    full               no    -         crosswind+turb
+ 13  APPROACH          low          full               yes   -         crosswind+turb+GUST (final)
+ 14-15 FLARE/TOUCHDOWN ~30->0 m     full, fading       yes   -         crosswind+gust at touchdown
+ 16-17 ROLLOUT/STOPPED 0            fades out (V->0)   no    -         dying out
+
+
+--------------------------------------------------------------------------------
+6.  HOW TO SET IT UP / TUNE
+--------------------------------------------------------------------------------
+ EVERYDAY TUNING (fcs_params.m, then re-run setup_fcs_sim.m):
+   WIND_W20       surface wind speed (shear + turbulence intensity anchor)
+   WIND_Wdeg      wind direction (0=N,90=E,180=S,270=W). Runway heading is 180,
+                  so 90 or 270 = pure crosswind; 0 = tailwind; 180 = headwind.
+   WIND_gust_amp  / WIND_gust_len / WIND_gust_t0   discrete gust size/shape/time
+   WIND_Lhigh     turbulence scale length aloft
+
+ TURBULENCE SEVERITY:
+   Open ACFT11_a_121/WindModels, open the Dryden block mask, set
+   'Turbulence probability of exceedance' (TurbProb) to Light / Moderate / Severe.
+
+ JETSTREAM:
+   Edit the MeanWind MATLAB Function (Wjet, h_jet, sig, dir_deg) inside
+   ACFT11_a_121/WindModels/MeanWind.
+
+ SCHEDULING (which phases / altitudes get wind):
+   Edit the Scheduler MATLAB Function inside ACFT11_a_121/WindModels:
+     - qlo/qhi     dynamic-pressure fade window
+     - the 20000/15000 numbers  altitude cap window
+     - the on_gust phase list   which phases enable the discrete gust
+
+ TURN WIND OFF:
+   - Turbulence only: Dryden block mask 'T_on' = 'off'.
+   - All of it: set WIND_W20=0 and T_on='off' (removes shear mean + turbulence);
+     set Wjet=0 in MeanWind to kill the jetstream; the discrete gust is then the
+     only residual (set WIND_gust_amp=[0 0 0] to remove it too).
+
+ VERIFY IT'S WORKING:
+   After a run, the sideslip beta and airspeed show wind signatures:
+     evalin('base','TW_beta')   % crosswind -> nonzero/steady sideslip
+     evalin('base','Vlog')      % turbulence -> short-term airspeed fluctuations
+   On the ground / in the >20 km coast these should be ~0 (scheduler gates off).
+
+
+--------------------------------------------------------------------------------
+7.  NOTES, LIMITATIONS, PERFORMANCE
+--------------------------------------------------------------------------------
+ * TURBULENCE MODEL CHOICE / SPEED:
+   The Aerospace Blockset ships von Karman only as a CONTINUOUS model. Continuous
+   turbulence passes continuous white noise through shaping filters, which forces
+   the variable-step ode15s solver into very small steps (especially at high
+   Mach) and makes full-mission runs extremely slow. We therefore use the
+   DISCRETE DRYDEN (+q +r) model (fixed-rate update, ts=0.02 s), which is the
+   standard way to run turbulence inside a large continuous flight model.
+   If you want von Karman specifically, the mask 'model' popup on the same block
+   offers the Continuous von Karman variants — expect much slower runs.
+
+ * ALGEBRAIC LOOP:
+   qbar and phase feed the Scheduler, and the wind feeds the air data that
+   produces qbar/phase. Memory (unit-delay) blocks on the qbar and phase inputs
+   break that loop (last-step values; harmless since they change slowly).
+
+ * V=0 SINGULARITY:
+   The turbulence/gust filters divide by airspeed, so V is clamped to >=1 m/s by
+   'Vclamp' before those blocks (the scheduler zeroes their output on the ground
+   anyway, so this only keeps the filters finite).
+
+ * AIRSPEED PROXY:
+   The turbulence blocks are fed EqM ground speed (not true airspeed) to avoid a
+   wind->airspeed->wind algebraic loop. The difference is the wind itself (small
+   vs the flight speed) and is acceptable for turbulence intensity/scale.
+
+ * ROTATIONAL GUSTS (GustRates output):
+   The Dryden (+q +r) block also outputs body-axis gust ANGULAR rates. These are
+   currently routed to a Terminator. For full rotational-gust fidelity they can
+   be summed into the body rates the aerodynamics block uses for its rate-damping
+   terms (Cl_p, Cm_q, Cn_r). This is a future refinement; the dominant
+   translational gust (alpha/beta/qbar perturbation) is already modeled.
+
+ * RUNWAY/DIRECTION CONVENTION:
+   Runway heading is 180 deg (approach from the north). WIND_Wdeg is the compass
+   direction the wind blows FROM. 90/270 deg = crosswind (tests the localizer),
+   0 deg = tailwind, 180 deg = headwind.
+
+
+--------------------------------------------------------------------------------
+8.  FILES & BLOCKS TOUCHED
+--------------------------------------------------------------------------------
+ ACFT11_a_121/WindModels .............. the wind subsystem (new)
+ ACFT11_a_121/EulerDCM ................ Euler-angles -> DCM for the wind blocks
+ ACFT11_a_121/MemQbarWind, MemPhaseWind  break the scheduler algebraic loop
+ ACFT11_a_121/Atmospheric/WindBody .... new inport; feeds the air-relative sum
+ fcs_params.m  (WIND_* section) ....... all tunable wind parameters
+ Libraries: aerolibwind2 (Dryden/Shear/Gust), aerolibtransform (Euler->DCM)
+
+================================================================================
+ END
+================================================================================
