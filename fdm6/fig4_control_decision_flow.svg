@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 740"><rect width="1000" height="740" fill="#ffffff"/>
+<defs><style>text{font-family:"Segoe UI",Arial,Helvetica,sans-serif;}</style>
+<marker id="ah" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#37474f"/></marker>
+<marker id="ahf" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#c62828"/></marker>
+<filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1.4" stdDeviation="1.6" flood-color="#90a4ae" flood-opacity="0.5"/></filter></defs>
+<text x="34" y="40" font-size="20" font-weight="700" fill="#102027">Figure 4 — Per-step control-law &amp; effector decision flow (100 Hz)</text>
+<rect x="360" y="64" width="280" height="44" rx="22" fill="#eceff1" stroke="#546e7a" stroke-width="2" filter="url(#sh)"/>
+<text x="500" y="91" text-anchor="middle" font-size="13" font-weight="700" fill="#263238">read law_select · sensors · q̄</text>
+<polygon points="500,127 620,170 500,213 380,170" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="500" y="168" text-anchor="middle" font-size="11.5" fill="#e65100">which longitudinal</text>
+<text x="500" y="184" text-anchor="middle" font-size="11.5" fill="#e65100">law is active?</text>
+<rect x="16" y="268" width="172" height="84" rx="9" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" filter="url(#sh)"/>
+<text x="102" y="299" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">GROUND</text>
+<text x="102" y="316" text-anchor="middle" font-size="11" fill="#455a64">q = rotation rate</text>
+<text x="102" y="332" text-anchor="middle" font-size="11" fill="#455a64">throttle = cmd</text>
+<rect x="214" y="268" width="172" height="84" rx="9" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" filter="url(#sh)"/>
+<text x="300" y="299" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">PITCH-HOLD</text>
+<text x="300" y="316" text-anchor="middle" font-size="11" fill="#455a64">θ = 12° climb</text>
+<text x="300" y="332" text-anchor="middle" font-size="11" fill="#455a64">throttle = MAX</text>
+<rect x="412" y="268" width="172" height="84" rx="9" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" filter="url(#sh)"/>
+<text x="498" y="299" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">AIR (cruise)</text>
+<text x="498" y="316" text-anchor="middle" font-size="11" fill="#455a64">TECS throttle+θ</text>
+<text x="498" y="332" text-anchor="middle" font-size="11" fill="#455a64">ACAH attitude</text>
+<rect x="610" y="268" width="172" height="84" rx="9" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" filter="url(#sh)"/>
+<text x="696" y="299" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">GAMMA</text>
+<text x="696" y="316" text-anchor="middle" font-size="11" fill="#455a64">q = Kγ(γc − γ)</text>
+<text x="696" y="332" text-anchor="middle" font-size="11" fill="#455a64">thr from guidance</text>
+<rect x="808" y="268" width="172" height="84" rx="9" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" filter="url(#sh)"/>
+<text x="894" y="299" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">FLARE</text>
+<text x="894" y="316" text-anchor="middle" font-size="11" fill="#455a64">idle throttle</text>
+<text x="894" y="332" text-anchor="middle" font-size="11" fill="#455a64">sink-rate pitch</text>
+<polyline points="500,213 500,240 102,240 102,267" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="500,213 500,240 300,240 300,267" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="500,213 500,240 498,240 498,267" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="500,213 500,240 696,240 696,267" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="500,213 500,240 894,240 894,267" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="500" y="234" text-anchor="middle" font-size="10.5" fill="#37474f">law_select  →</text>
+<rect x="230" y="392" width="540" height="58" rx="9" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="500" y="426" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">ENVELOPE PROTECTION — clamp α / Nz / bank / rate limits</text>
+<polyline points="102,352 102,376 500,376 500,391" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="300,352 300,376 500,376 500,391" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="498,352 498,376 500,376 500,391" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="696,352 696,376 500,376 500,391" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="894,352 894,376 500,376 500,391" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polygon points="500,468 625,512 500,556 375,512" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="500" y="510" text-anchor="middle" font-size="11.5" fill="#e65100">q̄ ≥ fade threshold?</text>
+<text x="500" y="526" text-anchor="middle" font-size="11.5" fill="#e65100">(aero surfaces effective)</text>
+<path d="M500,450 L500,468" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="40" y="626" width="250" height="72" rx="9" fill="#f3e5f5" stroke="#8e24aa" stroke-width="2" filter="url(#sh)"/>
+<text x="165" y="651" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">RCS torque</text>
+<text x="165" y="668" text-anchor="middle" font-size="11" fill="#455a64">(thin air — surfaces</text>
+<text x="165" y="684" text-anchor="middle" font-size="11" fill="#455a64">faded out)</text>
+<rect x="375" y="626" width="250" height="72" rx="9" fill="#eef2f0" stroke="#607d8b" stroke-width="2" filter="url(#sh)"/>
+<text x="500" y="651" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">BLEND INDI + RCS</text>
+<text x="500" y="668" text-anchor="middle" font-size="11" fill="#455a64">(crossover band,</text>
+<text x="500" y="684" text-anchor="middle" font-size="11" fill="#455a64">q̄-weighted)</text>
+<rect x="710" y="626" width="250" height="72" rx="9" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" filter="url(#sh)"/>
+<text x="835" y="651" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">INDI → de / da / dr</text>
+<text x="835" y="668" text-anchor="middle" font-size="11" fill="#455a64">(aero effective —</text>
+<text x="835" y="684" text-anchor="middle" font-size="11" fill="#455a64">RCS faded out)</text>
+<polyline points="375,512 165,512 165,625" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="250" y="505" text-anchor="middle" font-size="11" fill="#c62828">no</text>
+<path d="M500,556 L500,625" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="516" y="590" text-anchor="start" font-size="10.5" fill="#607d8b">band</text>
+<polyline points="625,512 835,512 835,625" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="740" y="505" text-anchor="middle" font-size="11" fill="#2e7d32">yes</text>
+</svg>

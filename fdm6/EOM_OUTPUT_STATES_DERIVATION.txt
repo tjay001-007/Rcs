@@ -1,0 +1,340 @@
+================================================================================
+ ACFT11_a_121  —  EQUATIONS OF MOTION BLOCK
+ Output States and Their Derivation (in detail)
+================================================================================
+ Model      : ACFT11_a_121.slx   (ECEF 6-DOF full-mission simulation)
+ Block      : ECEF_Core  (6-DOF rigid-body equations of motion)
+ Source     : ecef_out_fcn.m   (the output / measurement function)
+              [state derivative is in ecef_eom_fcn.m — see EQUATIONS_OF_MOTION_THEORY.txt]
+ Datum      : acft_datum.m  ->  lat0 = 36.973889 deg, lon0 = -25.171111 deg,
+                                 h0 = 2.24 m, runway heading rwy_hdg
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ 0.  WHAT "OUTPUT STATES" MEAN HERE
+--------------------------------------------------------------------------------
+The EqM block carries only 13 INTEGRATED states internally:
+
+      state = [ dr(3);  v_e(3);  q_b2e(4);  w_b(3) ]            (13x1)
+
+      dr    : ECEF position OFFSET from the datum origin r0      [m]
+      v_e   : velocity w.r.t Earth, expressed in ECEF            [m/s]
+      q_b2e : unit quaternion body->ECEF, scalar-first [w x y z] [-]
+      w_b   : body angular rate w.r.t inertial, in body [p;q;r]  [rad/s]
+
+Nothing else is integrated. Every other signal the model uses — latitude,
+altitude, Euler angles, airspeed, flight-path angle, heading, climb rate — is
+DERIVED ALGEBRAICALLY from those 13 numbers, once per step, by the output
+function ecef_out_fcn.m. These derived signals are the block's OUTPUT STATES.
+
+This document derives each one, in the order the code computes it, with the
+mathematics and the reason it is computed that way. It is the "measurement
+model" of the simulation: the map from the raw integrator state to the physical
+quantities a real aircraft's sensors and navigation system would report.
+
+The full output list (ecef_out_fcn.m signature):
+   [r_ecef, v_ecef, q_b2e, DCM_b2e, wbody,                       (raw ECEF)
+    VB_mps, Euler_rad, posNED, GroundSpeed, Gamma_deg, Track_deg, Vz, LLA,
+    LBE, VI_ned] = ecef_out_fcn(state)
+
+
+--------------------------------------------------------------------------------
+ 1.  PRELIMINARIES COMPUTED FIRST  (shared by all outputs)
+--------------------------------------------------------------------------------
+ These are built once at the top of the function and reused everywhere.
+
+ 1.1  WGS-84 constants (identical to the dynamics, so outputs are consistent):
+        we  = 7.292115e-5   rad/s     Earth rotation rate
+        Rea = 6378137.0     m         equatorial radius
+        f   = 1/298.257223563         flattening
+        e2  = f*(2-f)                 first eccentricity squared
+        b_e = Rea*(1-f)               polar (semi-minor) radius
+
+ 1.2  Datum origin in ECEF (from acft_datum via the geodetic->ECEF formula):
+        N0 = Rea / sqrt(1 - e2*sin(lat0)^2)            (prime-vertical radius)
+        r0 = [ (N0+h0)*cos(lat0)*cos(lon0);
+               (N0+h0)*cos(lat0)*sin(lon0);
+               (N0*(1-e2)+h0)*sin(lat0) ]
+      r0 is the fixed point the integrated offset dr is measured from.
+
+ 1.3  Unpack and NORMALISE the quaternion:
+        dr = state(1:3); v_e = state(4:6); q = state(7:10); w_b = state(11:13)
+        qn = q / |q|            (guard: + eps in the denominator)
+        qw=qn(1); qx=qn(2); qy=qn(3); qz=qn(4)
+      Normalising here guarantees the rotation matrix built next is a PROPER
+      orthonormal rotation even if the integrator let |q| drift slightly.
+
+ 1.4  Body->ECEF direction-cosine matrix from the unit quaternion:
+        C_b2e =
+        [ qw^2+qx^2-qy^2-qz^2,  2(qx*qy-qw*qz),      2(qx*qz+qw*qy);
+          2(qx*qy+qw*qz),       qw^2-qx^2+qy^2-qz^2, 2(qy*qz-qw*qx);
+          2(qx*qz-qw*qy),       2(qy*qz+qw*qx),      qw^2-qx^2-qy^2+qz^2 ]
+      Convention:  v_ecef = C_b2e * v_body.  This is the standard quaternion-to-
+      DCM map; C_b2e is orthonormal (C_b2e' = C_b2e^-1), a fact used repeatedly
+      below to rotate the other way for free.
+
+ 1.5  True ECEF position:
+        r_e = r0 + dr
+      (Reconstructed only now, to keep the integrator working on the small
+       offset dr — see EQUATIONS_OF_MOTION_THEORY.txt section 2.)
+
+
+================================================================================
+ 2.  RAW ECEF OUTPUTS  (the native integration interface)
+================================================================================
+ These are the state itself, repackaged — no transformation.
+
+   r_ecef  = r_e        true ECEF position           [m]   (= r0 + dr)
+   v_ecef  = v_e        ECEF velocity                [m/s]
+   q_b2e   = qn         normalised body->ECEF quat   [-]
+   DCM_b2e = C_b2e      body->ECEF rotation matrix   [-]
+   wbody   = w_b        body angular rate (inertial) [rad/s]
+
+ Why expose them: the attitude visualisation (viz_globe_attitude, PosLog/QuatLog
+ logging) and any ECEF-native consumer take r_ecef and q_b2e directly. All the
+ geodetic/NED outputs below are conveniences built from these five.
+
+
+================================================================================
+ 3.  GEODETIC LATITUDE / LONGITUDE / ALTITUDE  (LLA)  —  Bowring's method
+================================================================================
+ Goal: convert the ECEF position r_e = (x,y,z) into geodetic latitude, longitude,
+ and height ABOVE THE WGS-84 ELLIPSOID. Longitude is exact; latitude/altitude use
+ Bowring's closed-form (non-iterative) approximation, accurate to mm at aircraft
+ altitudes.
+
+   x = r_e(1);  y = r_e(2);  z = r_e(3)
+
+   Longitude (exact):
+        lon = atan2(y, x)
+
+   Distance from the polar axis:
+        p = sqrt(x^2 + y^2)
+
+   Second eccentricity squared:
+        ep2 = (Rea^2 - b_e^2) / b_e^2
+
+   Bowring auxiliary (parametric) latitude:
+        th  = atan2( z*Rea , p*b_e )
+
+   Geodetic latitude (closed form):
+        lat = atan2( z + ep2*b_e*sin(th)^3 ,
+                     p - e2 *Rea*cos(th)^3 )
+
+   Prime-vertical radius at this latitude:
+        Nlat = Rea / sqrt(1 - e2*sin(lat)^2)
+
+   Geodetic altitude:
+        alt = p/cos(lat) - Nlat
+
+   Output (degrees, degrees, metres):
+        LLA = [ lat*180/pi ; lon*180/pi ; alt ]
+
+ THEORY: the inverse problem (ECEF -> geodetic) has no elementary exact solution
+ because latitude appears implicitly through N(lat). Bowring's method gives a
+ single-pass formula that is more than accurate enough here, avoiding an
+ iteration inside a 100 Hz output function. LLA drives the globe/map display, the
+ atmosphere model (altitude -> rho, a, T), and altitude-based phase logic.
+
+
+================================================================================
+ 4.  LOCAL NED FRAMES  (rotation matrices)
+================================================================================
+ Two ECEF->NED rotations are built:
+
+   At the CURRENT geodetic point (lat, lon):
+        slat=sin(lat); clat=cos(lat); slon=sin(lon); clon=cos(lon)
+        C_e2ned =
+        [ -slat*clon, -slat*slon,  clat;
+          -slon,       clon,       0;
+          -clat*clon, -clat*slon, -slat ]
+
+   At the DATUM point (lat0, lon0):
+        C_e2ned0 = (same form, with lat0/lon0)
+
+ Convention: v_ned = C_e2ned * v_ecef. The rows are the North, East, Down unit
+ vectors of the local tangent frame expressed in ECEF. C_e2ned uses the CURRENT
+ latitude/longitude (so velocity/attitude are resolved in the true local frame
+ where the aircraft actually is), while C_e2ned0 is fixed at the datum (used for
+ the horizontal position projection in section 5).
+
+
+================================================================================
+ 5.  POSITION IN NED  (posNED)  —  hybrid tangent-plane / geodetic
+================================================================================
+   Datum origin at SEA LEVEL (h=0), in ECEF:
+        r0_sl = [ N0*cos(lat0)*cos(lon0);
+                  N0*cos(lat0)*sin(lon0);
+                  (N0*(1-e2))*sin(lat0) ]
+
+   Horizontal (North, East) by projecting onto the datum tangent plane:
+        pNE = C_e2ned0 * (r_e - r0_sl)
+
+   Assembled NED position:
+        posNED = [ pNE(1);        % North  [m]
+                   pNE(2);        % East   [m]
+                  -alt ]          % Down   = -(geodetic altitude)
+
+ KEY DESIGN POINT — why the vertical is NOT the tangent-plane value:
+ A pure tangent-plane projection would give a "down" component that DROPS below
+ true altitude by the Earth-curvature term ~ d^2/(2R) as the horizontal distance
+ d from the datum grows (tens of metres at 10s of km, hundreds of metres at 100s
+ of km). That would corrupt altitude-hold and the mission phase logic hundreds of
+ km downrange. So the horizontal components use the flat tangent-plane (fine for
+ North/East bookkeeping) but the VERTICAL uses the TRUE geodetic altitude alt
+ from section 3. Hence h = -posNED(3) is correct everywhere on the globe.
+
+
+================================================================================
+ 6.  BODY VELOCITY RELATIVE TO EARTH  (VB_mps)  —  [u; v; w]
+================================================================================
+        VB_mps = C_b2e' * v_e
+
+ Because C_b2e is orthonormal, its transpose is its inverse (ECEF->body). So this
+ rotates the Earth-relative velocity v_e from ECEF into BODY axes, giving the
+ classic body velocity components:
+        u = VB_mps(1)   forward
+        v = VB_mps(2)   right (lateral)
+        w = VB_mps(3)   down
+
+ These are the quantities the aerodynamics needs: airspeed, angle of attack
+ alpha = atan2(w,u), and sideslip beta = asin(v/|V|) are all built from (u,v,w)
+ (in the aero block, after subtracting wind). VB is velocity relative to EARTH;
+ the aero block subtracts the wind field to get the air-relative velocity.
+
+
+================================================================================
+ 7.  EULER ANGLES RELATIVE TO LOCAL NED  (Euler_rad = [phi; theta; psi])
+================================================================================
+ First form the body->NED rotation by chaining body->ECEF and ECEF->NED:
+        C_b2ned = C_e2ned * C_b2e
+
+ Then extract the standard aerospace 3-2-1 (yaw-pitch-roll) Euler angles:
+
+   Pitch (theta) from the (3,1) element, with a safety clamp to [-1, 1]:
+        sth   = -clamp( C_b2ned(3,1), -1, 1 )
+        theta = asin( sth )
+
+   Roll (phi) from the (3,2),(3,3) elements:
+        phi = atan2( C_b2ned(3,2), C_b2ned(3,3) )
+
+   Yaw / heading (psi) from the (2,1),(1,1) elements:
+        psi = atan2( C_b2ned(2,1), C_b2ned(1,1) )
+
+        Euler_rad = [phi; theta; psi]      (radians)
+
+ THEORY:
+ * These are OUTPUTS ONLY. The attitude STATE is the quaternion; Euler angles are
+   derived purely for human-readable display and for the few guidance/HUD
+   consumers that want phi/theta/psi. So the asin singularity at theta=+/-90 deg
+   is harmless to the integration — it would only momentarily mis-report heading,
+   never destabilise the model (unlike a Euler-angle STATE propagation).
+ * The asin argument is clamped to [-1,1] so a floating-point overshoot (e.g.
+   1.0000000002 at a near-vertical attitude) cannot produce a complex result.
+ * "Relative to LOCAL NED" means the angles are referenced to the tangent frame
+   at the aircraft's current position, which is what a real attitude/heading
+   reference system reports — not angles relative to the distant datum.
+
+
+================================================================================
+ 8.  TRAJECTORY SIGNALS FROM NED VELOCITY
+================================================================================
+ Resolve the Earth-relative velocity into the LOCAL NED frame:
+        vned = C_e2ned * v_e        =>  vned = [vN; vE; vD]
+
+ 8.1  Ground speed (horizontal speed over the ground):
+        GroundSpeed = sqrt( vN^2 + vE^2 )          [m/s]
+
+ 8.2  Flight-path angle (climb angle of the velocity vector):
+        Gamma_deg = atan2( -vD, GroundSpeed ) * 180/pi      [deg]
+      vD is "down-positive", so -vD is the climb-rate component; gamma is the
+      angle of the velocity vector above the local horizontal. This is EXACTLY
+      the signal the gamma-law and glide guidance track (gamma_cmd - gamma).
+
+ 8.3  Ground track angle (direction of travel over the ground, from North):
+        Track_deg = atan2( vE, vN ) * 180/pi                [deg]
+      Note: track is the direction the aircraft is MOVING; heading psi (section 7)
+      is where the NOSE points. They differ by wind drift / sideslip — the
+      lateral guidance (L1) cares about track, the attitude law about heading.
+
+ 8.4  Climb rate (vertical speed, positive up):
+        Vz = -vD                                            [m/s]
+
+ These are "inertial" (Earth-relative) trajectory quantities — they describe the
+ path over the ground, independent of how the nose is pointed.
+
+
+================================================================================
+ 9.  EXTRA BUS SIGNALS  (legacy-compatibility outputs)
+================================================================================
+   LBE    = C_b2ned      body->NED DCM. Named "LBE" to match the signal the old
+                         flat-earth EqM block produced, so downstream subsystems
+                         that consumed LBE keep working unchanged.
+   VI_ned = vned         the local-NED velocity vector [vN; vE; vD], exported for
+                         consumers that want the full NED velocity rather than the
+                         scalar GroundSpeed / Vz.
+
+
+================================================================================
+ 10.  DERIVATION DEPENDENCY MAP  (what is built from what)
+================================================================================
+        state(13)
+          |
+          +-- dr ---------------------> r_e = r0 + dr --------> r_ecef
+          |                                    |
+          |                                    +--> (Bowring) --> lat,lon,alt --> LLA
+          |                                                          |
+          +-- q_b2e --> (normalise) --> C_b2e --> DCM_b2e            |
+          |                               |                         |
+          |                               +--> C_e2ned(lat,lon) <---+
+          |                               |        |
+          |                               |        +--> posNED (horiz tangent + geodetic alt)
+          |                               |
+          |             C_b2ned = C_e2ned*C_b2e --> Euler_rad [phi,theta,psi]
+          |                               |      --> LBE
+          +-- v_e -----> v_ecef           |
+          |      |                        |
+          |      +--> C_b2e' * v_e -----> VB_mps [u,v,w]
+          |      |
+          |      +--> C_e2ned * v_e ----> vned --> GroundSpeed, Gamma_deg,
+          |                                        Track_deg, Vz, VI_ned
+          |
+          +-- w_b ----------------------> wbody
+
+
+================================================================================
+ 11.  OUTPUT SUMMARY TABLE
+================================================================================
+ OUTPUT        SYMBOL / FORMULA                             FRAME    UNITS   USED BY
+ -----------   ------------------------------------------   ------   -----   ------------------
+ r_ecef        r0 + dr                                      ECEF     m       viz, nav
+ v_ecef        v_e                                          ECEF     m/s     nav
+ q_b2e         q/|q|                                        b->ECEF  -       viz (QuatLog), attitude
+ DCM_b2e       C_b2e(q)                                     b->ECEF  -       weight force, transforms
+ wbody         w_b = [p;q;r]                                body     rad/s   INDI inner loop
+ VB_mps        C_b2e' * v_e = [u;v;w]                       body     m/s     aero (alpha,beta,V)
+ Euler_rad     [phi;theta;psi] from C_b2ned                 b->NED   rad     ACAH, HUD, displays
+ posNED        [tangent N; tangent E; -geodetic alt]        NED      m       altitude hold, phases
+ GroundSpeed   sqrt(vN^2+vE^2)                              NED      m/s     guidance, HUD
+ Gamma_deg     atan2(-vD, GroundSpeed)                      NED      deg     gamma-law, glide
+ Track_deg     atan2(vE, vN)                                NED      deg     L1 lateral guidance
+ Vz            -vD                                          NED      m/s     climb-rate, TECS
+ LLA           [lat;lon;alt] (Bowring)                      geodetic deg,m   map, atmosphere
+ LBE           C_b2ned                                      b->NED   -       legacy consumers
+ VI_ned        vned = [vN;vE;vD]                            NED      m/s     nav
+
+ CONVENTIONS RECAP
+   * C_b2e orthonormal  =>  C_b2e' = inverse (ECEF->body) — used for VB_mps.
+   * Quaternion scalar-first [w x y z]; normalised before any use.
+   * NED "Down" positive: climb = -vD, altitude = -posNED(3).
+   * Euler angles & flight path are referenced to the LOCAL tangent frame at the
+     aircraft's current position (current lat/lon), not the datum.
+   * Everything here is ALGEBRA on the 13 integrated states — no integration, no
+     memory; the output function is a pure, stateless measurement map.
+
+================================================================================
+ END — generated 2026-10-26 for ACFT11_a_121.slx  (ecef_out_fcn.m)
+ See also: EQUATIONS_OF_MOTION_THEORY.txt (the dynamics / state derivative),
+           ecef_out_fcn.m, ecef_eom_fcn.m, acft_datum.m, FCS_CONTROLLER_THEORY.txt
+================================================================================

@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 2250"><rect width="820" height="2250" fill="#ffffff"/>
+<defs><style>text{font-family:"Segoe UI",Arial,Helvetica,sans-serif;}</style>
+<marker id="ah" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#37474f"/></marker>
+<marker id="ahf" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#c62828"/></marker>
+<filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1.4" stdDeviation="1.6" flood-color="#90a4ae" flood-opacity="0.5"/></filter></defs>
+<text x="34" y="40" font-size="20" font-weight="700" fill="#102027">Figure 3 — Mission sequencer: phase-transition decision flow</text>
+<path d="M410,58 L410,78" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="450" y="70" text-anchor="start" font-size="11" fill="#546e7a">start</text>
+<rect x="220" y="80" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="108" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">GROUND ROLL</text>
+<polygon points="410,140 560,172 410,204 260,172" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="176" text-anchor="middle" font-size="12" fill="#e65100">V ≥ Vr ?</text>
+<path d="M410,126 L410,139" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,204 L410,217" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="220" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,172 670,172 670,103 601,103" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="165" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="218" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="246" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">ROTATION</text>
+<polygon points="410,278 560,310 410,342 260,310" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="314" text-anchor="middle" font-size="12" fill="#e65100">gear &lt; WoW  and  h &gt; 50 m ?</text>
+<path d="M410,264 L410,277" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,342 L410,355" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="358" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,310 670,310 670,241 601,241" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="303" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="356" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="384" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">LIFT-OFF  →  CLIMB</text>
+<polygon points="410,416 560,448 410,480 260,448" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="452" text-anchor="middle" font-size="12" fill="#e65100">h ≥ 6000 m ?</text>
+<path d="M410,402 L410,415" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,480 L410,493" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="496" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,448 670,448 670,379 601,379" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="441" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="494" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="522" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">CRUISE 1  (dwell, arm boost)</text>
+<polygon points="410,554 560,586 410,618 260,586" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="590" text-anchor="middle" font-size="12" fill="#e65100">dwell ≥ 20 s ?</text>
+<path d="M410,540 L410,553" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,618 L410,631" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="634" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,586 670,586 670,517 601,517" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="579" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="632" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="660" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">ACCEL  (pre-pitch to γ = 12°)</text>
+<polygon points="410,692 560,724 410,756 260,724" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="728" text-anchor="middle" font-size="12" fill="#e65100">Mach ≥ 0.95 ?</text>
+<path d="M410,678 L410,691" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,756 L410,769" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="772" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,724 670,724 670,655 601,655" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="717" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="770" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="798" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">ZOOM  (aerospike 250 kN, γ = 24°)</text>
+<polygon points="410,830 560,862 410,894 260,862" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="866" text-anchor="middle" font-size="12" fill="#e65100">h ≥ 27 km   or   burn ≥ 45 s ?</text>
+<path d="M410,816 L410,829" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,894 L410,907" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="910" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,862 670,862 670,793 601,793" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="855" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="908" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="936" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">SEPARATE  (drop stage mass)</text>
+<polygon points="410,968 560,1000 410,1032 260,1000" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1004" text-anchor="middle" font-size="12" fill="#e65100">settle ≥ 2 s ?</text>
+<path d="M410,954 L410,967" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1032 L410,1045" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1048" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1000 670,1000 670,931 601,931" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="993" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1046" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1074" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">COAST  (hold +3° AoA)</text>
+<polygon points="410,1106 560,1138 410,1170 260,1138" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1142" text-anchor="middle" font-size="12" fill="#e65100">q̄ ≥ 5000 Pa ? (air dense)</text>
+<path d="M410,1092 L410,1105" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1170 L410,1183" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1186" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1138 670,1138 670,1069 601,1069" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1131" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1184" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1212" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">GLIDE  (energy-managed)</text>
+<polygon points="410,1244 560,1276 410,1308 260,1276" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1280" text-anchor="middle" font-size="12" fill="#e65100">in relight box? (M, q̄, h)</text>
+<path d="M410,1230 L410,1243" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1308 L410,1321" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1324" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1276 670,1276 670,1207 601,1207" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1269" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1322" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1350" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">RELIGHT  (spool engine)</text>
+<polygon points="410,1382 560,1414 410,1446 260,1414" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1418" text-anchor="middle" font-size="12" fill="#e65100">spool ≥ 5 s ?</text>
+<path d="M410,1368 L410,1381" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1446 L410,1459" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1462" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1414 670,1414 670,1345 601,1345" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1407" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1460" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1488" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">CRUISE — return to base</text>
+<polygon points="410,1520 560,1552 410,1584 260,1552" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1556" text-anchor="middle" font-size="12" fill="#e65100">range-to-home ≤ 100 km ?</text>
+<path d="M410,1506 L410,1519" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1584 L410,1597" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1600" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1552 670,1552 670,1483 601,1483" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1545" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1598" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1626" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">DESCEND to platform</text>
+<polygon points="410,1658 560,1690 410,1722 260,1690" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1694" text-anchor="middle" font-size="12" fill="#e65100">range ≤ 20 km  &amp;  aligned ?</text>
+<path d="M410,1644 L410,1657" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1722 L410,1735" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1738" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1690 670,1690 670,1621 601,1621" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1683" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1736" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1764" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">APPROACH  (ILS glide-slope)</text>
+<polygon points="410,1796 560,1828 410,1860 260,1828" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1832" text-anchor="middle" font-size="12" fill="#e65100">height AGL ≤ 15 m ?</text>
+<path d="M410,1782 L410,1795" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1860 L410,1873" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="1876" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1828 670,1828 670,1759 601,1759" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1821" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="1874" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1902" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">FLARE  (sink-rate law)</text>
+<polygon points="410,1934 560,1966 410,1998 260,1966" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="1970" text-anchor="middle" font-size="12" fill="#e65100">main-gear contact ?</text>
+<path d="M410,1920 L410,1933" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,1998 L410,2011" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="2014" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,1966 670,1966 670,1897 601,1897" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="1959" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="2012" width="380" height="46" rx="9" fill="#e8eaf6" stroke="#3949ab" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="2040" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">TOUCHDOWN  →  ROLLOUT (brakes)</text>
+<polygon points="410,2072 560,2104 410,2136 260,2104" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="2108" text-anchor="middle" font-size="12" fill="#e65100">V ≤ 2 m/s ?</text>
+<path d="M410,2058 L410,2071" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M410,2136 L410,2149" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="426" y="2152" text-anchor="start" font-size="11" fill="#2e7d32">yes</text>
+<polyline points="560,2104 670,2104 670,2035 601,2035" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="590" y="2097" text-anchor="start" font-size="11" fill="#c62828">no</text>
+<rect x="220" y="2150" width="380" height="46" rx="9" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" filter="url(#sh)"/>
+<text x="410" y="2178" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">STOPPED</text>
+</svg>

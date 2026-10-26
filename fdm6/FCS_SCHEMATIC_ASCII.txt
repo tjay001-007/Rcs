@@ -1,0 +1,138 @@
+================================================================================
+ ACFT11_a_121  —  FLIGHT CONTROL SYSTEM  —  ASCII SCHEMATIC
+ Cascaded (nested-loop) architecture.  Forward path flows DOWN;
+ the state/sensor feedback bus runs UP the right-hand side ( <==== ).
+================================================================================
+
+
+                            r e f e r e n c e   /   s u p e r v i s o r y
+  +==========================================================================+   |
+  |                   MISSION SEQUENCER   (Stateflow FSM)                     |   |
+  |   17 phases: GROUNDROLL..ROTATE..LIFTOFF..CLIMB..CRUISE..ACCEL..ZOOM..    |<==+
+  |              SEPARATE..GLIDE..RELIGHT..RTB..DESCEND..APPROACH..FLARE..     |   ^
+  |              TOUCHDOWN..ROLLOUT..STOPPED                                   |   |
+  |   outputs:  guidance MODE (GM_*) | law_select (FCS_LAW_*) | prop_mode(PM_*)|  |
+  +==========================================================================+   |
+        | MODE, law_select                              | prop_mode (PM_*)       |
+        v                                               |                        |
+  +==========================================================================+   |
+  |                   GUIDANCE  /  TRAJECTORY                                 |   |
+  |   climb/cruise set-points | ACCEL pre-pitch | ZOOM gamma | COAST track    |<==+
+  |   GlideCompute (energy glide) | L1 track | ILS localizer + glide slope    |   ^
+  |   outputs:   gamma_cmd  ·  V_cmd  ·  h_cmd  ·  psi_cmd                     |   |
+  +==========================================================================+   |
+        |                                                                        |
+        |  references distributed to the four outer control laws                 |
+        v                                                                        |
+  +-------------+   +-------------+   +--------------+   +---------------------+  |
+  |   TECS      |   |   ACAH      |   |  gamma-law   |   |   L1  LATERAL       |  |
+  | energy ->   |   | attitude -> |   | flight-path  |   | track -> a_lat ->   |<=+
+  | throttle +  |   | rate cmd    |   | -> q_cmd     |   | bank -> p_cmd       |  ^
+  | pitch cmd   |   | Kth/Kph/Kbe |   | Kgamma=1.5   |   | L1_tc=18 s          |  |
+  | Kti Ktp Kei |   | q,p,r cmd   |   | (zoom/coast/ |   | bank<=35deg         |  |
+  | Kep         |   |             |   |  glide)      |   |                     |  |
+  +-----+-------+   +------+------+   +------+-------+   +----------+----------+  |
+        |                  |                |                      |             |
+   throttle           p_cmd q_cmd r_cmd  q_cmd                  phi_cmd->p_cmd   |
+        |                  +--------+------+----------------------+              |
+        |                           |  (merged body-rate commands)              |
+        |                           v                                           |
+        |            +==========================================+               |
+        |            |        ENVELOPE PROTECTION               |               |
+        |            |  alpha limiter  (12 / 16 deg)            |<==============+
+        |            |  Nz limiter     (NzLimiter: +3 / -1 g)   |               ^
+        |            |  bank limiter   (35 / 60 deg)            |               |
+        |            |  rate & theta clamps                     |               |
+        |            +====================+=====================+               |
+        |                                 | p_cmd  q_cmd  r_cmd (protected)      |
+        |                                 v                                      |
+        |   +===============================================================+    |
+        |   |                 INDI  INNER  LOOP   (INDI_Inner)              |    |
+        |   |   d_cmd = d_0 + G^-1 * ( nu - omega_dot_meas )                |    |
+        |   |                                                               |    |
+        |   |  nu = [Kp*(p_cmd-p); Kq*(q_cmd-q); Kr*(r_cmd-r)]              |    |
+        |   |       Kp=6  Kq=5  Kr=4                                         |<===+
+        |   |                                                               |    ^
+        |   |  +----------+  +------------+  +---------+  +---------------+   |    |
+        |   |  | rate err |->|  G^-1      |->| q-bar   |->| per-step rate |   |    |
+        |   |  | x K(pqr) |  | scheduled  |  | fade    |  | clamps        |   |    |
+        |   |  |          |  | (alpha,M)  |  |1000..   |  | de/da/dr      |   |    |
+        |   |  |          |  | aero tabs  |  |6000 Pa  |  | (rate*dt)     |   |    |
+        |   |  +----------+  +------------+  +---------+  +---------------+   |    |
+        |   |  omega_dot_meas <-- washout/deriv filter (Nfilt=20 rad/s) -----|<--+|
+        |   +================================+==============================+    |
+        |                                    | de  da  dr  (increment)            |
+        |                                    v                                    |
+        |            +==========================+     +========================+  |
+        |            |      ACTUATORS           |     |   RCS  (reaction ctrl) |  |
+        |            | elevator / aileron /     |     | thin-air attitude law  |<=+
+        |            | rudder                   |     | +3deg AoA, wn=0.35     |  ^
+        |            | pos lim 25/20/25 deg     |     | budget 4000 N*m/axis   |  |
+        |            | rate lim 80/100/80 deg/s |     | q-bar faded OUT >3kPa  |  |
+        |            +------------+=============+     +===========+============+  |
+        |                         | de,da,dr                      | RCS torque    |
+   throttle                       |                               |               |
+        |                         |          (aero/RCS blended by q-bar)          |
+        v                         v                               v               |
+  +.........................  P L A N T   —   6-DOF  ECEF  .......................+|
+  :                                                                              :|
+  :  +----------------+   +------------------+   +------------------+            :|
+  :  | PROPULSION     |   |  AERODYNAMICS    |   |  LANDING GEAR    |            :|
+  :  | Prop.Manager + |   |  (Aerovegamidfid)|   |  normal + fric   |            :|
+  :  | SpoolLag       |   |  CL CD CY /      |   |  (while WoW)     |            :|
+  :  | tau=2 s;       |   |  Cl Cm Cn tables |   |                  |            :|
+  :  | aerospike 250kN|   |  x q-bar*S(,b,c) |   |                  |            :|
+  :  | fixed,1s decay |   |                  |   |                  |            :|
+  :  +-------+--------+   +--------+---------+   +--------+---------+            :|
+  :          |  thrust            | aero F,M              | gear F,M            :|
+  :          +---------+----------+-----------------------+                     :|
+  :                    v                                                        :|
+  :          +--------------------------+     +-------------------------------+ :|
+  :          |   ExtForcesMoments       |     |  GravityBody (analytic g_e)   | :|
+  :          |   sum NON-gravity F,M    |     |  WGS-84 + J2 -> logged weight | :|
+  :          +------------+=============+     +-------------------------------+ :|
+  :                       | Fb , Mb                                            :|
+  :                       v                                                    :|
+  :          +============================================================+    :|
+  :          |          ECEF_Core   (Equations of Motion, 13-state)       |    :|
+  :          |  translational: v_e_dot = C_b2e*Fb/m + g_e(J2)             |    :|
+  :          |                 - 2 we x v_e - we x(we x r_e)              |    :|
+  :          |  rotational   : w_dot = I^-1 ( Mb - w x I w )              |    :|
+  :          |  attitude     : quaternion propagation (+ unit-norm fb)    |    :|
+  :          |  outputs via ecef_out_fcn (LLA, NED, Euler, gamma, ...)    |    :|
+  :          +============================+===============================+    :|
+  :                                       |  states / derived outputs          :|
+  +.......................................|....................................+|
+                                          |                                     |
+                                          +=============> STATE / SENSOR BUS ===+
+                                             V, h, Mach, alpha, beta, gamma,
+                                             phi/theta/psi, p/q/r, q-bar, WoW
+                                             ( fed back UP to every stage above )
+
+
+--------------------------------------------------------------------------------
+ LEGEND
+--------------------------------------------------------------------------------
+   |  v  ^        forward / vertical signal flow
+   <==== / ==>    state-&-sensor feedback bus (runs up the right side)
+   +==== box      a controller stage or law block
+   +.... box      the PLANT (dashed) — physics, not controller
+   nu             desired angular acceleration (INDI virtual input)
+   G              control-effectiveness matrix (scheduled from aero tables,
+                  x live q-bar);  G^-1 = inner-loop inversion gain
+   omega_dot_meas measured/filtered body angular acceleration (the INDI feedback)
+   q-bar          dynamic pressure 0.5*rho*V^2  — the master scheduling variable
+
+ READING THE CASCADE (outer = slower, inner = faster):
+   SEQUENCER   decides the phase & which law owns pitch/throttle   (supervisory)
+   GUIDANCE    turns the phase into gamma/V/h/psi references        (trajectory)
+   OUTER LAWS  TECS/ACAH/gamma/L1 turn references into RATE cmds    (~1 Hz band)
+   ENVELOPE    clamps those commands to alpha / Nz / bank limits    (safety shell)
+   INDI        turns rate error into surface INCREMENTS via G^-1    (100 Hz inner)
+   ACTUATORS   move elevator/aileron/rudder (+ RCS in vacuum)
+   PLANT       aero+prop+gear -> forces/moments -> 6-DOF EOM -> states
+   FEEDBACK    states sensed and returned to every stage above
+
+================================================================================
+ END — ACFT11_a_121.slx   (see FCS_CONTROLLER_THEORY.txt for the full theory)
+================================================================================

@@ -1,0 +1,443 @@
+================================================================================
+ ACFT11_a_121  —  FLIGHT CONTROL SYSTEM
+ Controller Block Structure and Control Theory
+================================================================================
+ Model      : ACFT11_a_121.slx   (ECEF 6-DOF full-mission simulation)
+ Aircraft   : supersonic two-stage carrier UAV, ~28.5 t class
+              S = 85.25 m^2,  b = 9.05 m,  c-bar = 15.55 m,  envelope M0.4-M4
+ Controller : INDI inner loop  +  ACAH / TECS / gamma-law / L1 outer loops
+              driven by a 17-phase Stateflow mission sequencer
+ Update rate: 100 Hz  (FCS_dt = 0.01 s)
+ Parameters : all gains / limits / effectiveness live in fcs_params.m
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ 0.  HOW TO READ THIS DOCUMENT
+--------------------------------------------------------------------------------
+The controller is a classic cascaded (nested-loop) autopilot. From the outside
+in, each layer runs slower and commands the layer beneath it:
+
+      MISSION SEQUENCER      "what phase am I in, what is the goal"
+            |  (guidance mode + set-points)
+            v
+      GUIDANCE / TRAJECTORY  "what flight-path / speed / heading do I want"
+            |  (gamma_cmd, V_cmd, h_cmd, psi_cmd)
+            v
+      OUTER CONTROL LAWS     "what attitude / energy split achieves that"
+      (TECS / ACAH / gamma / L1)
+            |  (theta_cmd, phi_cmd, throttle  ->  p/q/r RATE commands)
+            v
+      INDI INNER LOOP        "what surface increment produces that angular accel"
+            |  (elevator, aileron, rudder, + RCS in thin air)
+            v
+      ACTUATORS -> AERO / EOM (the 6-DOF ECEF plant)
+
+Each section below gives (a) the block(s) in the model that implement the layer,
+(b) the signals in and out, and (c) the control theory behind it.
+
+The sign/number conventions used throughout:
+  * Body axes x-fwd, y-right, z-down. Rates p (roll), q (pitch), r (yaw).
+  * Attitude carried as a body->ECEF quaternion [w x y z] (scalar first);
+    Euler angles (phi, theta, psi) and the body->NED DCM are derived from it.
+  * "qbar" = dynamic pressure = 0.5*rho*V^2 (Pa). It is the single most important
+    scheduling variable in the whole controller.
+
+
+--------------------------------------------------------------------------------
+ 1.  TOP-LEVEL SIGNAL FLOW
+--------------------------------------------------------------------------------
+      +------------------+        +------------------+       +----------------+
+      |  Sensors / Nav   |        | Mission Manager  |       |   Guidance     |
+      |  (from EqM bus)  |---+--->| (Stateflow)      |------>| (mode-switched |
+      |  V, h, M, gamma, |   |    |  phase + MODE +  |  MODE | law set-points)|
+      |  phi/theta/psi,  |   |    |  law_select +    |       +--------+-------+
+      |  p/q/r, alpha,   |   |    |  set-points      |                |
+      |  beta, qbar, WoW |   |    +------------------+                |
+      +------------------+   |                                        v
+               |            |     +-------------------------------------------+
+               |            +---->|  OUTER LAWS                               |
+               |                  |   TECS (throttle + pitch via energy)      |
+               |                  |   ACAH (attitude -> rate cmd)             |
+               |                  |   gamma-law (flight-path -> q_cmd)        |
+               |                  |   L1 lateral (track -> bank -> p_cmd)     |
+               |                  |   Envelope prot (alpha / Nz / bank)       |
+               |                  +----------------+--------------------------+
+               |                   p_cmd q_cmd r_cmd|  throttle
+               |                                    v
+               |                  +-------------------------------------------+
+               +----------------->|  INDI INNER LOOP (INDI_Inner)             |
+            (p,q,r, accel est)    |   measured angular accel + G^-1 * (nu-...) |
+                                  |   qbar fade + per-step rate clamps        |
+                                  +----------------+--------------------------+
+                                        de  da  dr  |  (+ RCS torque in vacuum)
+                                                    v
+                                  +-------------------------------------------+
+                                  |  ACTUATORS -> AERO (Aerovegamidfid) ->    |
+                                  |  ExtForcesMoments -> ECEF_Core (6-DOF EqM)|
+                                  +-------------------------------------------+
+                                                    |
+                                                    +--> states fed back to top
+
+
+--------------------------------------------------------------------------------
+ 2.  MISSION SEQUENCER  (Stateflow "MissionManager")
+--------------------------------------------------------------------------------
+Role: the finite-state machine that decides WHICH phase the vehicle is in, and
+publishes three things on buses the rest of the FCS consumes:
+  * the phase enum (PH_*) — logging / scopes,
+  * the guidance MODE (GM_*) — tells Guidance which trajectory law to run,
+  * the longitudinal law_select (FCS_LAW_*) — tells the pitch path which law owns
+    the pitch-rate command this instant, and
+  * the propulsion MODE (PM_*) — tells the Propulsion Manager which engine set.
+
+17 phases (PH_* in fcs_params.m):
+  GROUNDROLL -> ROTATION -> LIFTOFF -> CLIMB1 -> CRUISE1 -> ACCEL -> ZOOM ->
+  SEPARATE -> GLIDE -> RELIGHT -> CRUISE_RTB -> DESCEND -> APPROACH -> FLARE ->
+  TOUCHDOWN -> ROLLOUT -> STOPPED
+
+Guidance modes (GM_*):  GROUND, CLIMB, ACCEL, ZOOM, COAST, GLIDE, RELIGHT,
+                        CRUISE, APPROACH.
+Longitudinal laws (FCS_LAW_*):
+  GROUND(0)     q_cmd = rotation-rate cmd, throttle = thr_cmd
+  AIR(1)        TECS + ACAH (speed/altitude managed) — the normal cruise law
+  FLARE(2)      idle throttle, pitch to theta_flare / sink-rate law
+  PITCHHOLD(3)  initial climb: hold theta_climb via ACAH, throttle MAX
+  GAMMA(4)      q_cmd from Kgamma*(gamma_cmd - gamma); throttle from guidance
+                (zoom / coast / glide — flight-path tracking)
+
+Transitions are gated on physical thresholds (all in fcs_params.m), e.g.
+  * ROTATION when V >= Vr (FCS_V_rotate, runtime input),
+  * LIFTOFF->CLIMB when gear normal force < FCS_WoW_thresh and h > FCS_h_gearsafe,
+  * ACCEL->ZOOM at Mach FCS_M_trans = 0.95,
+  * ZOOM->SEPARATE at h >= FCS_h_apogee_tgt = 27 km (or burnout at FCS_t_burn),
+  * GLIDE->RELIGHT inside the airbreathing relight box (Mach/qbar window),
+  * RTB / DESCEND / APPROACH / FLARE / ROLLOUT gated on range-to-home and AGL.
+
+THEORY — why a sequencer at all:
+A single autopilot law cannot fly ground roll, a Mach-2 rocket zoom, a near-
+ballistic coast, and an ILS landing. The sequencer is a SUPERVISORY / hybrid
+controller: it switches the continuous laws beneath it and hands each law the
+right reference. The key design rule is BUMPLESS TRANSFER — when the owning law
+changes, the newly-active law must start from the current command so nothing
+steps. Where that was violated it caused real transients (see 7.4, pitch dip).
+
+
+--------------------------------------------------------------------------------
+ 3.  GUIDANCE LAYER  (trajectory set-points)
+--------------------------------------------------------------------------------
+Guidance converts the mission MODE into the continuous references the outer laws
+track. It is a set of MATLAB Function blocks selected by MODE.
+
+Key guidance computations:
+
+ 3.1  Climb / cruise:      V_cmd, h_cmd set-points per phase (e.g. V_climb=180,
+      h_cruise=6000). TECS turns these into throttle + pitch.
+
+ 3.2  ACCEL pre-pitch:     to keep load factor bounded at the boost pull-up, the
+      ACCEL state ramps gamma_cmd toward FCS_gamma_accel (12 deg) as Mach climbs
+      from FCS_M_prepitch (0.80) upward, so the vehicle is ALREADY nose-up before
+      ZOOM and little sudden pull remains. (See 6 / load-factor shaping.)
+
+ 3.3  ZOOM:                gamma_cmd = FCS_gamma_zoom (24 deg). Aerospike at fixed
+      250 kN; the trajectory is shaped by PITCH, not throttle (the rocket is
+      on/off only). Burn is a fixed 45 s (FCS_t_burn) -> separation near burnout.
+
+ 3.4  COAST (reentry-style, thin air):
+      gamma_cmd = gamma + FCS_alpha_coast (= flight-path + 3 deg AoA bias).
+      This is the critical fix of this session: instead of commanding a fixed
+      nose-over (which drove alpha negative and slammed the elevator at cutoff),
+      the law TRACKS the current flight path and simply holds a small positive
+      AoA along the ballistic arc. gamma_in (flight-path angle) is fed into the
+      sequencer from Bus Selector1 for this. Handoff to the energy glide happens
+      once qbar rises back above FCS_qbar_glide (5000 Pa) — i.e. when the air is
+      dense enough for real aero control.
+
+ 3.5  GLIDE (energy-managed, GlideCompute block):
+      * Heading:  glide_psi_cmd = bearing_home  (point straight home; an earlier
+        gated version swept the heading and over-turned — corrected).
+      * Flight-path: gamma points at the relight target, with the altitude->gamma
+        feedback SOFTENED (atan shaping half*0.3 -> half*1.0) and passed through a
+        1/(3s+1) low-pass (GlideGammaLP) to kill a lightly-damped pitch
+        oscillation. gamma clamped between FCS_gamma_glide_shallow (3 deg, best
+        glide / max range when far) and FCS_gamma_glide_steep (18 deg, dump energy
+        when high/close).
+
+ 3.6  APPROACH:            ILS-style localizer + 3 deg glide slope (FCS_GS_angle),
+      localizer correction FCS_Kloc capped at FCS_loc_max_corr, exponential
+      sink-rate flare hdot_cmd = -(h_agl)/tau_flare at FCS_h_flare.
+
+THEORY — guidance vs control:
+Guidance answers "where to go" (kinematics / trajectory); control answers "how to
+make the airframe go there" (dynamics / moments). Keeping them separate lets each
+guidance law be a simple geometric/energy rule, while one robust inner loop
+handles all the nonlinear airframe dynamics.
+
+
+--------------------------------------------------------------------------------
+ 4.  LONGITUDINAL OUTER LAWS
+--------------------------------------------------------------------------------
+
+ 4.1  TECS — Total Energy Control System  (block "TECS")
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ Idea: treat airspeed and altitude together through ENERGY.
+   Specific total energy   E   ~ (V^2)/2 + g*h
+   Specific energy balance B   ~ g*h - (V^2)/2   (altitude vs speed split)
+ THROTTLE controls total energy RATE (add/remove energy):
+   throttle = thr_trim + Ktp*Edot_err + Kti*integral(Edot_err)
+ PITCH (elevator, via theta_cmd) controls the energy BALANCE (trade height<->speed):
+   theta_cmd = theta_trim + Kep*Bdot_err + Kei*integral(Bdot_err)
+ Gains (fcs_params.m): Kti=0.10, Ktp=0.30, Kei=0.08, Kep=0.25, thr in [0,1].
+
+ Why TECS instead of two independent PID loops: speed and altitude are strongly
+ coupled through energy (pull up and you slow down). TECS decouples them cleanly
+ -> no fighting between an "altitude-holds-with-elevator" and a "speed-holds-with-
+ throttle" loop.
+
+ BUMPLESS TRANSFER (session fix 7.4): the TECS pitch integrator pitch_int is held
+ reset while law_select != AIR(1), with an EXTERNAL initial condition
+      pitch_int_IC = FCS_theta_climb - Kep*eBal
+ so that at the instant TECS takes over, theta_cmd = FCS_theta_climb exactly and
+ the nose does not dip. law_select is routed into the TECS block, reset is 'level'
+ on (law_select - 1) via a Bias(-1) block.
+
+ 4.2  ACAH — Attitude-Command / Attitude-Hold  (pitch & bank outer loops)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ A proportional attitude loop that turns an ATTITUDE error into a RATE command
+ for the INDI inner loop:
+      q_cmd = Ktheta * (theta_cmd - theta)        Ktheta = 2.0  1/s
+      p_cmd = Kphi   * (phi_cmd   - phi)           Kphi   = 3.0  1/s
+      r_cmd = Kbeta  * (0 - beta)  (+ yaw-damper)  Kbeta  = 2.0  1/s
+ The yaw channel also has a washed-out yaw damper (FCS_yawdamp_wo = 1 rad/s) for
+ Dutch-roll damping without fighting steady turns.
+ Rate commands are saturated (FCS_q_max=15, FCS_p_max=40, FCS_r_max=15 deg/s).
+
+ 4.3  gamma-law — flight-path hold  (FCS_LAW_GAMMA, used in zoom/coast/glide)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+      q_cmd = Kgamma * (gamma_cmd - gamma)         Kgamma = 1.5  1/s
+ Used wherever we want to fly a flight-path angle directly rather than an
+ altitude (ballistic-ish segments where "hold 3 deg AoA along the arc" is the
+ natural command). The gamma_cmd itself comes from guidance (sections 3.3-3.5).
+
+ 4.4  Load-factor shaping of gamma_cmd (keep Nz < 2.5 g at ignition)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ For a coordinated pull, Nz ~ 1 + V*gammadot/g. So a step in gamma_cmd at Mach
+ ~0.95 would demand a huge gammadot and spike Nz. Two mechanisms bound it:
+   (1) pre-pitch during ACCEL (3.2) removes most of the step, and
+   (2) a SPEED-SCHEDULED rate limit on gamma_cmd (Rate Limiter Dynamic block),
+       slew cap = (FCS_Nz_zoom_tgt - 1)*g / V, which bounds
+            Nz = 1 + V*gammadot/g  <=  FCS_Nz_zoom_tgt  by construction.
+ FCS_Nz_zoom_tgt = 2.0 is set below 2.5 so the inner-loop's ~0.3 g dynamic
+ overshoot still peaks under 2.5 g. Measured peak = 2.42 g.
+
+
+--------------------------------------------------------------------------------
+ 5.  LATERAL / DIRECTIONAL OUTER LAW  (L1 guidance, block "L1law")
+--------------------------------------------------------------------------------
+ L1 nonlinear lateral guidance converts a cross-track / track-angle error into a
+ lateral acceleration command, then into a bank command:
+      a_lat_cmd = (2*V / L1_tc) * sin(eta)            L1_tc = 18 s
+      phi_cmd   = atan( a_lat_cmd / g )   (coordinated-turn bank)
+ where eta is the angle between the velocity vector and the line to the aim point.
+ phi_cmd is then clamped to FCS_bank_max (35 deg normal, 60 deg hard) and handed
+ to the ACAH bank loop (4.2), which produces p_cmd for the INDI roll channel.
+
+ THEORY: L1 behaves like a proportional-navigation / pursuit law. A larger L1_tc
+ = longer look-ahead = gentler, better-damped turns. It was raised 15 -> 18 s this
+ session (with bank_max 45->35 and p_max 60->40 deg/s) to stop the lateral
+ surfaces hitting their stops and to remove a control limit-cycle in turns.
+ (Open item: the glide still over-turns on the heading loop — see section 11.)
+
+
+--------------------------------------------------------------------------------
+ 6.  INDI INNER LOOP  (block "INDI_Inner")  —  the heart of the controller
+--------------------------------------------------------------------------------
+ INDI = Incremental Nonlinear Dynamic Inversion. It is a SENSOR-BASED feedback
+ linearization that avoids needing a full aerodynamic model.
+
+ Angular dynamics (schematically):   omega_dot = f(x) + G(x) * delta
+ where delta = [elevator, aileron, rudder] and G is the control-effectiveness
+ matrix. Classic NDI needs the whole f(x) + G(x). INDI instead uses the MEASURED
+ (estimated) current angular acceleration omega_dot_meas and only the control
+ term, writing the next command INCREMENTALLY about the current surface position:
+
+      delta_cmd = delta_0  +  G^-1 * ( nu - omega_dot_meas )
+
+   where
+      delta_0           = current (previous) surface position,
+      omega_dot_meas    = measured angular accel, filtered (washout/derivative
+                          filter at FCS_Nfilt = 20 rad/s),
+      nu                = desired angular accel from the rate loops:
+                            nu_p = Kp*(p_cmd - p)      Kp = 6.0
+                            nu_q = Kq*(q_cmd - q)      Kq = 5.0
+                            nu_r = Kr*(r_cmd - r)      Kr = 4.0
+                          (these set the rate-loop bandwidths, 1/s.)
+
+ Because f(x) is replaced by the measured omega_dot, INDI is inherently robust to
+ model error and aero nonlinearity — the plant "tells" the controller what it is
+ doing, and the controller only reasons about the INCREMENT needed to change it.
+
+ 6.1  G-matrix SCHEDULING  (setup_gschedule.m)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ G is not constant — control effectiveness varies with alpha, Mach, and dynamic
+ pressure. The schedule is built directly from the aircraft's own aero lookup
+ tables so the inverse matches the plant:
+      Cm_elev(alpha,Mach)  -> Gq = Cm_de * (S*c / Iyy)      (pitch)
+      Cl_AilT(alpha,Mach)  -> Gp = Cl_da * (S*b / Ixx)      (roll)
+      Cn_rudder(alpha,Mach)-> Gr = Cn_dr * (S*b / Izz)      (yaw)
+ These G-coefficient tables are looked up live by (alpha, Mach); the INDI then
+ only multiplies by live qbar to get the actual effectiveness: G = G_coef * qbar.
+ Anchor magnitudes (per rad, @alpha=2 deg): Cm_de=-0.144, Cl_da=-0.126,
+ Cn_dr=-0.059. (Note: scalar Cn_rud=0 in the config is LEGACY/unused — the real
+ rudder power is the Cn_rudder table, which is healthy.)
+
+ 6.2  DYNAMIC-PRESSURE FADE  (anti-windup at low airspeed / high altitude)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ At very low qbar the surfaces are nearly powerless and G^-1 blows up. The INDI
+ increment is scaled by
+      fade = sat( (qbar - FCS_qbar_lo) / (FCS_qbar_hi - FCS_qbar_lo), 0, 1 )
+ with FCS_qbar_lo = 1000 Pa, FCS_qbar_hi = 6000 Pa. So the surface loops carry no
+ authority (and cannot wind up) when controls are ineffective, and fade in
+ smoothly as speed builds. Lower bounds FCS_Gmin_* also guard the inverse.
+
+ 6.3  PER-STEP RATE CLAMPS  (flutter fix — done INSIDE the loop)
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ The actuator rate limits are enforced as increment clamps on each INDI step:
+      |delta_cmd - delta_0|  <=  FCS_*_rate * FCS_dt     (RateLim_de/da/dr)
+ This keeps the loop AWARE of the limit. An EXTERNAL rate limiter was tried first
+ and caused a max-rate bang-bang / windup limit-cycle (~65-77 Hz "flutter") —
+ it was reverted in favour of these internal clamps, which eliminated the flutter
+ (chatter -> elevator 0 / aileron 4 / rudder 3 Hz) and cut RMS surface rate ~3x.
+
+ THEORY — why INDI for this vehicle: the envelope spans M0.4-M4 and the airframe
+ is strongly nonlinear and configuration-changing (fuel burn, stage drop). A
+ fixed-gain linear controller would need gain-scheduling everywhere; INDI needs
+ only an accurate G (scheduled) and a clean angular-accel estimate, and absorbs
+ the rest of the dynamics through measurement.
+
+
+--------------------------------------------------------------------------------
+ 7.  ENVELOPE PROTECTION  (safety limiters, always active)
+--------------------------------------------------------------------------------
+ These sit between the outer laws and the inner loop and OVERRIDE commands to keep
+ the aircraft inside its structural / aerodynamic envelope.
+
+ 7.1  Angle-of-attack limiter:
+      soft limit FCS_alpha_prot = 12 deg (begin pushing nose down),
+      hard limit FCS_alpha_max  = 16 deg;
+      gamma-law AoA limiter:  q_cmd <= FCS_Kalpha_lim*(alpha_max - alpha).
+ 7.2  Normal load-factor limiter (NzLimiter, MATLAB Function):
+      clamps the FINAL pitch-rate command (after the law-select switch) so every
+      phase is protected, not just ACAH; FCS_Nz_max = 3.0 g, FCS_Nz_min = -1.0 g,
+      gain FCS_Knz = 20 deg/s per g. (See also the gamma-cmd shaping, 4.4.)
+ 7.3  Bank limiter:  FCS_bank_max = 35 deg (normal), FCS_bank_hard = 60 deg.
+ 7.4  Rate/attitude clamps: q/p/r_max and theta in [-20, 30] deg.
+
+ These limiters are the "hard outer shell" of an envelope-protected flight
+ control system: the pilot/guidance can ask for anything, but the aircraft will
+ not exceed alpha, Nz, or bank limits.
+
+
+--------------------------------------------------------------------------------
+ 8.  REACTION CONTROL SYSTEM  (block "RCS_ctrl")  —  attitude control in vacuum
+--------------------------------------------------------------------------------
+ Above ~20 km the air is too thin for the aero surfaces (qbar fade -> 0), so a
+ reaction control system holds attitude on thruster torque. Design:
+   * Holds +3 deg AoA (FCS_alpha_coast), matching the COAST gamma-law bias, so
+     RCS and surfaces command the same thing and do not fight at the handoff.
+   * Second-order attitude law, low bandwidth wn = 0.35 rad/s (smooth, fuel-frugal).
+   * PER-AXIS torque budget = 4000 N.m (down from 50k/120k) — a hard saturation on
+     demanded RCS torque; the analysis script checks commanded vs this budget.
+   * qbar fade-OUT by ~3000 Pa: as the aero surfaces regain authority the RCS
+     fades to a light low-qbar backup only, so the two systems cross over smoothly
+     rather than both acting at once.
+
+ THEORY: this is a blended aero/RCS control-allocation. The scheduling variable is
+ again qbar: aero authority ~ qbar (fades IN with 6.2), RCS authority is constant
+ but faded OUT as qbar rises. The crossover is deliberately overlapped so there is
+ never a gap in attitude authority through the thin-air arc.
+
+
+--------------------------------------------------------------------------------
+ 9.  PROPULSION MANAGER  &  ENGINE LAG
+--------------------------------------------------------------------------------
+ Propulsion modes (PM_*) are commanded by the sequencer:
+   OFF(0) coast/glide, AB_DRY(1) military dry, AB_WET(2) afterburner,
+   AEROSPIKE(3) rocket only, AEROSPIKE_AB(4) combined boost, IDLE(5) ground.
+ Key behaviours:
+   * Airbreathing thrust = throttle * Tmax, but passed through a FIRST-ORDER SPOOL
+     LAG  1/(FCS_tau_spool*s + 1)  (SpoolLag, tau = 2 s) on the throttle into
+     PropulsionFCN, so thrust builds gradually (at every throttle change and at
+     relight) instead of stepping instantly.
+   * Aerospike = FIXED 250 kN, ON/OFF only (never throttled). The zoom trajectory
+     is shaped by pitch/gamma, not thrust. At cutoff the thrust DECAYS over 1 s
+     via a Rate Limiter (ThrustRamp) instead of an instantaneous cut — this,
+     together with the COAST gamma-law, removed the elevator slam at burnout.
+   * Fuel flow per mode (FF_rates) drives the mass model below.
+
+
+--------------------------------------------------------------------------------
+ 10.  MASS / INERTIA MODEL  (block "MassModel")
+--------------------------------------------------------------------------------
+ Mass and inertia change through the mission (fuel burn + stage drop), so the
+ model interpolates them live:
+   * Mass integrates -fuel_flow (FF_rates by PM mode) from MASS_full = 28500 kg.
+   * Inertia [Ixx Iyy Izz Ixz] is a 3-point lookup vs mass (MASS_bp):
+     full -> separated -> empty.
+   * Stage separation drops FCS_m_stage = 3000 kg over a 0.5 s RAMP (not a step),
+     so the inertia change is smooth and does not kick the dynamics.
+ The current mass/inertia feed both the EOM (plant) and the INDI G-schedule
+ (which divides by Iyy/Ixx/Izz), so the inner loop stays correctly inverted as
+ the vehicle gets lighter.
+
+
+--------------------------------------------------------------------------------
+ 11.  WIND / TURBULENCE  (disturbance model, "WindModels")
+--------------------------------------------------------------------------------
+ Not part of the controller, but it is what the controller rejects:
+ wind shear + Gaussian jetstream mean wind + DISCRETE Dryden turbulence
+ (discrete so the continuous ode15s solver is not driven to tiny steps) + a single
+ 1-cosine discrete gust. All intensities fade with qbar and are capped above
+ ~20 km (no wind in the thin-air coast / RCS regime).
+
+
+--------------------------------------------------------------------------------
+ 12.  KNOWN OPEN ITEMS  (controller-relevant)
+--------------------------------------------------------------------------------
+ * Glide over-turn: the glide can hold ~160 s at the 35 deg bank limit (>360 deg of
+   turn) — a heading/L1 loop issue, separate from the gamma damping.
+ * Glide-entry pitch transient: theta dips to ~-17 deg at the COAST->GLIDE handoff,
+   then settles.
+ * Lateral deflection in turns: aileron/rudder still reach 100% in genuine glide/
+   approach turns (now rate-limited and flutter-free, but no deflection margin).
+ * Rollout solver failure at t~1854 s (stiff gear/ground contact) — numerical, not
+   control.
+
+
+--------------------------------------------------------------------------------
+ 13.  PARAMETER / BLOCK QUICK REFERENCE
+--------------------------------------------------------------------------------
+ LAYER            BLOCK(S)                 KEY GAINS / LIMITS (fcs_params.m)
+ ---------------  -----------------------  -------------------------------------
+ Sequencer        MissionManager (SF)      PH_*, GM_*, PM_*, FCS_LAW_*, thresholds
+ Guidance         GlideCompute, L1law,     FCS_gamma_*, FCS_L1_tc, FCS_GS_angle,
+                  guidance MATLAB fcns      FCS_alpha_coast, FCS_qbar_glide
+ TECS             TECS                     Kti .10 Ktp .30 Kei .08 Kep .25
+ ACAH             attitude loops           Ktheta 2 Kphi 3 Kbeta 2
+ gamma-law        gamma pitch law          Kgamma 1.5
+ Load shaping     Rate Limiter Dynamic,    FCS_Nz_zoom_tgt 2.0, FCS_gamma_accel 12,
+                  NzLimiter                 FCS_M_prepitch 0.80
+ INDI inner       INDI_Inner               Kp 6 Kq 5 Kr 4, Nfilt 20,
+                                            qbar_lo 1000 / hi 6000, G-schedule
+ Actuator limits  (inside INDI)            de 25/80  da 20/100  dr 25/80 (deg, deg/s)
+ Envelope prot    alpha / Nz / bank lim    alpha 12/16, Nz 3/-1 g, bank 35/60
+ RCS              RCS_ctrl                 budget 4000 N.m, wn 0.35, +3 deg AoA
+ Propulsion       PropulsionFCN, SpoolLag, tau_spool 2 s, aerospike 250 kN fixed,
+                  ThrustRamp                1 s decay
+ Mass             MassModel                MASS_* , FF_rates, 0.5 s jettison ramp
+
+================================================================================
+ END — generated 2026-10-26 for ACFT11_a_121.slx
+ See also: fcs_params.m (all tunables), setup_gschedule.m (INDI G-matrix),
+           SESSION_CHANGES.md (change history), analyze_control_authority.m.
+================================================================================

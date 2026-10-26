@@ -1,0 +1,127 @@
+# ACFT11_a_121 — Flight Control System Schematic (Mermaid)
+
+Cascaded (nested-loop) architecture. The forward path runs top→down; the
+state/sensor feedback bus (dashed red) returns to every stage. Renders in
+GitHub, VS Code (Markdown Preview Mermaid Support), Obsidian, Notion, or
+<https://mermaid.live>. The raw diagram is also saved as `FCS_SCHEMATIC.mmd`.
+
+```mermaid
+flowchart TD
+
+    %% ================= SUPERVISORY =================
+    SEQ["<b>MISSION SEQUENCER</b> (Stateflow FSM)<br/>17 phases: GROUNDROLL → … → ZOOM →<br/>COAST → GLIDE → RTB → FLARE → ROLLOUT<br/>outputs: MODE · law_select · prop_mode"]
+
+    %% ================= GUIDANCE =================
+    GUID["<b>GUIDANCE / TRAJECTORY</b><br/>climb/cruise set-pts · ACCEL pre-pitch ·<br/>ZOOM gamma · COAST track · energy GLIDE ·<br/>L1 track · ILS localizer + glide-slope<br/>outputs: gamma_cmd · V_cmd · h_cmd · psi_cmd"]
+
+    %% ================= OUTER CONTROL LAWS =================
+    subgraph OUTER["OUTER CONTROL LAWS"]
+        direction LR
+        TECS["<b>TECS</b><br/>energy → throttle<br/>+ pitch cmd<br/>Kti Ktp Kei Kep"]
+        ACAH["<b>ACAH</b><br/>attitude → rate cmd<br/>Ktheta=2 Kphi=3<br/>Kbeta=2"]
+        GAM["<b>gamma-law</b><br/>flight-path → q_cmd<br/>Kgamma=1.5<br/>(zoom/coast/glide)"]
+        L1["<b>L1 LATERAL</b><br/>track → a_lat → bank<br/>→ p_cmd<br/>L1_tc=18 s, bank≤35°"]
+    end
+
+    %% ================= ENVELOPE PROTECTION =================
+    ENV["<b>ENVELOPE PROTECTION</b><br/>alpha limiter 12/16° · Nz limiter +3/−1 g ·<br/>bank limiter 35/60° · rate &amp; theta clamps"]
+
+    %% ================= INDI INNER LOOP =================
+    subgraph INNER["INDI INNER LOOP — 100 Hz"]
+        direction LR
+        NU["rate error × gains<br/>Kp=6 Kq=5 Kr=4<br/>→ nu (desired accel)"]
+        SUM(("Σ<br/>nu − ω̇"))
+        GINV["G⁻¹ scheduled<br/>from aero tables<br/>(alpha, Mach) × q-bar"]
+        QF["q-bar fade<br/>1000 → 6000 Pa<br/>(anti-windup)"]
+        CL["per-step rate clamps<br/>de/da/dr = rate·dt"]
+        FILT["ω̇ filter<br/>Nfilt = 20 rad/s"]
+        NU -->|nu| SUM
+        FILT -->|"ω̇_meas"| SUM
+        SUM -->|error| GINV --> QF --> CL
+    end
+
+    %% ================= EFFECTORS =================
+    ACT["<b>ACTUATORS</b><br/>elevator / aileron / rudder<br/>pos 25/20/25° · rate 80/100/80 °/s"]
+    RCS["<b>RCS</b> (vacuum attitude)<br/>+3° AoA hold · wn=0.35<br/>4000 N·m/axis · q-bar faded OUT"]
+
+    %% ================= PLANT =================
+    subgraph PLANT["PLANT — 6-DOF ECEF (physics)"]
+        direction TB
+        PROP["PROPULSION<br/>Prop.Mgr + SpoolLag τ=2 s<br/>aerospike 250 kN fixed, 1 s decay"]
+        AERO["AERODYNAMICS (Aerovegamidfid)<br/>CL CD CY / Cl Cm Cn tables × q-bar·S"]
+        GEAR["LANDING GEAR<br/>normal + friction (while WoW)"]
+        EFM["ExtForcesMoments<br/>Σ non-gravity F, M → Fb, Mb"]
+        GRAV["GravityBody<br/>WGS-84 + J2 → logged weight"]
+        EOM["<b>ECEF_Core — EQUATIONS OF MOTION</b><br/>v̇ = C·Fb/m + g_e(J2) − 2ω×v − ω×(ω×r)<br/>ω̇ = I⁻¹(Mb − ω×Iω) · quaternion attitude<br/>ecef_out_fcn → LLA, NED, Euler, gamma…"]
+        PROP --> EFM
+        AERO --> EFM
+        GEAR --> EFM
+        EFM -->|Fb, Mb| EOM
+        GRAV -. logged .-> EOM
+    end
+
+    %% ================= FEEDBACK BUS =================
+    BUS["<b>STATE / SENSOR BUS</b><br/>V · h · Mach · alpha · beta · gamma ·<br/>phi/theta/psi · p/q/r · q-bar · WoW"]
+
+    %% ================= FORWARD PATH =================
+    SEQ -->|"MODE, law_select"| GUID
+    SEQ -->|prop_mode| PROP
+    GUID --> OUTER
+    TECS -->|throttle| PROP
+    OUTER -->|"p/q/r cmd"| ENV
+    ENV -->|"protected p/q/r cmd"| NU
+    CL -->|"de, da, dr increment"| ACT
+    ACT -->|surface deflection| AERO
+    RCS -->|RCS torque| EFM
+    EOM --> BUS
+
+    %% ================= FEEDBACK PATH (dashed) =================
+    BUS -.->|feedback| SEQ
+    BUS -.->|feedback| GUID
+    BUS -.->|feedback| OUTER
+    BUS -.->|feedback| ENV
+    BUS -.->|"p/q/r, ω̇"| NU
+    BUS -.-> FILT
+    BUS -.->|attitude| RCS
+
+    %% ================= STYLING =================
+    classDef sup   fill:#e8eaf6,stroke:#3949ab,color:#1a237e;
+    classDef gui   fill:#e0f2f1,stroke:#00897b,color:#004d40;
+    classDef loop  fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
+    classDef env   fill:#fff3e0,stroke:#fb8c00,color:#e65100;
+    classDef indi  fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef eff   fill:#eceff1,stroke:#546e7a,color:#263238;
+    classDef rcs   fill:#f3e5f5,stroke:#8e24aa,color:#4a148c;
+    classDef plant fill:#e0f7fa,stroke:#00838f,color:#006064;
+    classDef bus   fill:#ffebee,stroke:#c62828,color:#b71c1c;
+
+    class SEQ sup;
+    class GUID gui;
+    class TECS,ACAH,GAM,L1 loop;
+    class ENV env;
+    class NU,SUM,GINV,QF,CL,FILT indi;
+    class ACT eff;
+    class RCS rcs;
+    class PROP,AERO,GEAR,EFM,GRAV,EOM plant;
+    class BUS bus;
+```
+
+## How to read it
+
+| Layer | Role | Band |
+|-------|------|------|
+| **Mission Sequencer** | picks the phase; decides which law owns pitch/throttle | supervisory |
+| **Guidance** | turns the phase into gamma / V / h / psi references | trajectory |
+| **Outer laws** (TECS·ACAH·gamma·L1) | references → body-**rate** commands + throttle | ~1 Hz |
+| **Envelope protection** | clamps commands to alpha / Nz / bank limits | safety shell |
+| **INDI inner loop** | rate error → surface **increments** via `G⁻¹` | 100 Hz |
+| **Actuators / RCS** | move elevator/aileron/rudder (RCS in vacuum) | effectors |
+| **Plant** | aero+prop+gear → forces/moments → 6-DOF EOM → states | physics |
+| **Feedback bus** | states sensed and returned to every stage | — |
+
+`q-bar` (dynamic pressure) is the master scheduling variable: it fades the INDI
+surface authority **in** as speed builds and fades the RCS authority **out**, so
+the two blend smoothly through the thin-air coast.
+
+> See `FCS_CONTROLLER_THEORY.txt` for the full theory and
+> `EQUATIONS_OF_MOTION_THEORY.txt` for the plant/EOM detail.

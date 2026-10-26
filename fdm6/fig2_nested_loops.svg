@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 500"><rect width="820" height="500" fill="#ffffff"/>
+<defs><style>text{font-family:"Segoe UI",Arial,Helvetica,sans-serif;}</style>
+<marker id="ah" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#37474f"/></marker>
+<marker id="ahf" markerWidth="11" markerHeight="11" refX="8" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#c62828"/></marker>
+<filter id="sh" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="1.4" stdDeviation="1.6" flood-color="#90a4ae" flood-opacity="0.5"/></filter></defs>
+<text x="34" y="40" font-size="20" font-weight="700" fill="#102027">Figure 2 — Nested control loops  (pitch axis; roll/yaw identical in form)</text>
+<rect x="30" y="70" width="540" height="390" rx="12" fill="none" stroke="#1565c0" stroke-width="2.2"/>
+<text x="44" y="90" font-size="12.5" font-weight="700" fill="#1565c0">Altitude / energy loop (TECS) — slow</text>
+<rect x="66" y="104" width="468" height="322" rx="12" fill="none" stroke="#1e88e5" stroke-width="2.2"/>
+<text x="80" y="124" font-size="12.5" font-weight="700" fill="#1e88e5">Attitude loop (ACAH)</text>
+<rect x="102" y="138" width="396" height="254" rx="12" fill="none" stroke="#43a047" stroke-width="2.2"/>
+<text x="116" y="158" font-size="12.5" font-weight="700" fill="#43a047">Rate loop</text>
+<rect x="138" y="172" width="324" height="186" rx="12" fill="none" stroke="#2e7d32" stroke-width="2.2"/>
+<text x="152" y="192" font-size="12.5" font-weight="700" fill="#2e7d32">INDI acceleration loop — 100 Hz</text>
+<rect x="168" y="215" width="250" height="72" rx="9" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" filter="url(#sh)"/>
+<text x="293" y="247" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">G^-1 inversion</text>
+<text x="293" y="265" text-anchor="middle" font-size="11" fill="#455a64">+ measured angular accel</text>
+<rect x="630" y="150" width="150" height="56" rx="9" fill="#eceff1" stroke="#546e7a" stroke-width="2" filter="url(#sh)"/>
+<text x="705" y="174" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">elevator /</text>
+<text x="705" y="192" text-anchor="middle" font-size="11" fill="#455a64">actuator</text>
+<rect x="630" y="270" width="150" height="78" rx="9" fill="#e0f7fa" stroke="#00838f" stroke-width="2" filter="url(#sh)"/>
+<text x="705" y="305" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1b2a38">airframe</text>
+<text x="705" y="323" text-anchor="middle" font-size="11" fill="#455a64">pitch dynamics</text>
+<path d="M418,251 L628,178" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<path d="M705,206 L705,268" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<polyline points="705,348 705,392 250,392 250,287" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="300" y="408" text-anchor="start" font-size="11" fill="#c62828">angular accel  (ω̇, measured &amp; filtered)  →  INDI</text>
+<polyline points="630,309 598,309 598,118 536,118" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="548" y="112" text-anchor="start" font-size="10.5" fill="#c62828">h  →  altitude loop</text>
+<polyline points="630,300 568,300 568,152 500,152" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="512" y="146" text-anchor="start" font-size="10.5" fill="#c62828">θ  →  attitude loop</text>
+<polyline points="630,292 538,292 538,186 464,186" stroke="#c62828" stroke-width="1.8" stroke-dasharray="6 4" fill="none" marker-end="url(#ahf)"/>
+<text x="476" y="198" text-anchor="start" font-size="10.5" fill="#c62828">q  →  rate loop</text>
+<text x="40" y="486" text-anchor="start" font-size="11.5" fill="#546e7a">Each loop sets the target for the faster loop nested inside it; feedback (dashed) closes each one. Outer = slow, inner = 100 Hz.</text>
+</svg>

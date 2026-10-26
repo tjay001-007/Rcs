@@ -1,0 +1,227 @@
+================================================================================
+ ACFT11_a_121 FLIGHT CONTROL SYSTEM
+ Controller Structure — Descriptive (textbook / systems-engineering style)
+================================================================================
+
+
+1.  DESIGN PHILOSOPHY
+--------------------------------------------------------------------------------
+The flight control system is organised as a layered, cascaded controller. Each
+layer has one clearly defined job and talks only to the layer directly above and
+below it. From the outside in, the layers move from "slow, strategic" decisions
+to "fast, physical" actions:
+
+    - the outer layers decide WHERE the aircraft should go,
+    - the middle layers decide WHAT ATTITUDE achieves that,
+    - the inner layer decides WHICH SURFACE MOVEMENTS produce that attitude.
+
+This separation is deliberate. It means a single robust inner loop can handle all
+the difficult, fast, nonlinear airframe behaviour, while the slower outer loops
+stay simple and can be tuned with constant gains that work across the whole
+flight envelope (from takeoff at low speed to Mach 4 and back to landing).
+
+
+2.  FUNCTIONAL BLOCKS (what each block does, in plain terms)
+--------------------------------------------------------------------------------
+
+BLOCK 1 — MISSION SEQUENCER  (the "brain" / mode manager)
+    A state machine that knows the whole mission as a list of 17 phases
+    (ground roll, rotation, lift-off, climb, cruise, accelerate, zoom climb,
+    stage separation, coast, glide, engine relight, return-to-base, descent,
+    approach, flare, touchdown, roll-out).
+    Its job: watch the aircraft's speed, altitude, Mach number and position, and
+    decide WHICH PHASE the aircraft is currently in. It then tells the rest of
+    the system three things: which guidance goal to pursue, which control law
+    should be in charge of pitch and throttle, and which engines should be
+    running.
+
+BLOCK 2 — GUIDANCE  (the "navigator")
+    Takes the current phase from the sequencer and turns it into concrete
+    targets: a desired flight-path angle, a desired airspeed, a desired altitude
+    and a desired heading. For example, in the climb it asks for a climb speed
+    and altitude; in the glide it points the nose toward home and manages energy;
+    on approach it follows an ILS-style glide slope to the runway.
+    Its job: convert "what phase am I in" into "what path and speed do I want".
+
+BLOCK 3 — OUTER CONTROL LAWS  (the "pilot's hands and feet", four laws)
+    These convert the guidance targets into ATTITUDE and RATE commands:
+      - TECS (Total Energy Control): manages airspeed and altitude together by
+        treating them as energy. It decides how much throttle to add and how much
+        to pitch up or down, so speed and altitude never fight each other.
+      - ACAH (Attitude Command / Attitude Hold): compares the desired pitch and
+        bank angle with the actual angle and asks for a turn rate to close the
+        gap.
+      - Gamma law: in the zoom, coast and glide, it commands pitch directly from
+        flight-path-angle error (used when flying a trajectory rather than an
+        altitude).
+      - L1 lateral guidance: steers the aircraft onto its track by asking for a
+        bank angle, which then becomes a roll-rate command.
+    Their job: turn "where I want to go" into "what attitude/rate I need".
+
+BLOCK 4 — ENVELOPE PROTECTION  (the "safety fence")
+    Sits just before the inner loop and clamps every command so the aircraft
+    cannot be asked to do something unsafe: it limits angle of attack, limits the
+    normal load factor (g), and limits bank angle. No matter what the guidance or
+    the pilot asks for, the aircraft stays inside its structural and aerodynamic
+    limits.
+    Its job: never let the commands exceed safe limits.
+
+BLOCK 5 — INDI INNER LOOP  (the "muscle controller", runs 100 times a second)
+    This is the heart of the controller. It receives the desired roll/pitch/yaw
+    rates and works out exactly how far to move the elevator, ailerons and rudder
+    to achieve them. It does this incrementally: it measures how fast the aircraft
+    is actually rotating right now, compares that with what is wanted, and nudges
+    the surfaces by just the right amount to make up the difference.
+    Because it works from live measurements, it does not need a perfect
+    mathematical model of the aircraft and automatically copes with changes in
+    speed, altitude and weight.
+    Its job: turn rate commands into precise control-surface movements.
+
+BLOCK 6 — ACTUATORS  (the moving surfaces)
+    The elevator, ailerons and rudder. They have real limits on how far and how
+    fast they can move; the inner loop respects those limits so the surfaces
+    never slam or flutter.
+
+BLOCK 7 — REACTION CONTROL SYSTEM (RCS)  (attitude control in thin air)
+    High above the atmosphere the air is too thin for the control surfaces to
+    work. There, small thrusters hold the aircraft's attitude instead. The system
+    blends smoothly between surfaces and thrusters based on dynamic pressure (how
+    much "bite" the air has): surfaces fade in as speed/air density build, RCS
+    fades out.
+    Its job: keep attitude controllable when the surfaces cannot.
+
+BLOCK 8 — PROPULSION MANAGER  (the engines)
+    Runs the right engines for each phase (dry jet, afterburner, rocket aerospike,
+    or idle) as commanded by the sequencer, and builds thrust up smoothly rather
+    than instantly (a realistic engine spool-up).
+    Its job: provide thrust appropriate to the phase.
+
+BLOCK 9 — PLANT / EQUATIONS OF MOTION  (the aircraft itself)
+    The aerodynamics, propulsion and landing gear produce forces and moments on
+    the airframe; the 6-degree-of-freedom equations of motion integrate those to
+    give the aircraft's new position, velocity and attitude. This is the physics
+    the controller is trying to steer.
+
+BLOCK 10 — SENSORS / FEEDBACK  (the aircraft's awareness)
+    The current speed, altitude, Mach, angle of attack, attitude, rates, dynamic
+    pressure and weight-on-wheels are measured and fed back to every block above,
+    so each layer always acts on the true state of the aircraft.
+
+
+3.  HOW THE BLOCKS CONNECT (signal flow, in words)
+--------------------------------------------------------------------------------
+    The SEQUENCER decides the phase and hands goals to GUIDANCE.
+    GUIDANCE produces target path, speed, altitude and heading.
+    The OUTER LAWS turn those targets into attitude and rate commands
+        (and TECS also sets the throttle).
+    ENVELOPE PROTECTION clamps those commands to safe limits.
+    The INDI INNER LOOP turns the safe rate commands into surface movements.
+    The ACTUATORS (and RCS in thin air) move, creating aerodynamic and thrust
+        forces on the PLANT.
+    The PLANT (equations of motion) produces the new aircraft state.
+    The SENSORS feed that state back up to every block, closing all the loops.
+
+
+4.  DECISION FLOW (how the sequencer advances the mission)
+--------------------------------------------------------------------------------
+This is the systems-engineering "decision flow" — plain if/then logic. Each step
+is checked continuously; when a condition is met, the sequencer advances.
+
+    START: on the runway, engines idle.
+
+    [1] GROUND ROLL
+        IF airspeed >= rotation speed  -> go to ROTATION.
+
+    [2] ROTATION
+        Raise the nose to lift-off pitch.
+        IF the wheels leave the ground (low gear load)  -> go to LIFT-OFF.
+
+    [3] LIFT-OFF
+        Hold a fixed climb pitch, full thrust.
+        IF altitude above the gear-safe height  -> go to CLIMB.
+
+    [4] CLIMB
+        Climb at the climb speed toward cruise altitude (TECS in charge).
+        IF cruise altitude reached  -> go to CRUISE.
+
+    [5] CRUISE
+        Hold altitude and speed.
+        IF the cruise dwell time has elapsed (boost armed)  -> go to ACCELERATE.
+
+    [6] ACCELERATE
+        Add afterburner and build Mach; gently pre-pitch the nose up as speed
+        builds (this keeps the later pull-up gentle).
+        IF Mach reaches the transition Mach  -> go to ZOOM.
+
+    [7] ZOOM CLIMB
+        Light the rocket (aerospike), pull up to the zoom flight-path angle, and
+        climb hard. The pull is rate-limited so the g stays below 2.5.
+        IF apogee altitude reached, or the rocket burn time ends  -> go to
+        SEPARATION.
+
+    [8] STAGE SEPARATION
+        Let the rocket thrust decay over about a second (not a sudden cut), drop
+        the second-stage mass smoothly, and hold a small positive angle of attack
+        along the arc.
+        After a short settle time  -> go to COAST.
+
+    [9] COAST (thin air, near-ballistic)
+        Follow the flight path with a small nose-up bias; hold attitude with the
+        RCS thrusters because the air is too thin for the surfaces.
+        IF dynamic pressure rises back to a useful level (descending into denser
+        air)  -> go to GLIDE.
+
+    [10] GLIDE
+        Point toward home and manage energy: glide shallow when far, steeper when
+        high or close. Surfaces are back in control.
+        IF inside the engine-relight window (right Mach and dynamic pressure)
+        -> go to RELIGHT.
+
+    [11] ENGINE RELIGHT
+        Spool the air-breathing engine back up smoothly.
+        After the spool-up time  -> go to RETURN-TO-BASE CRUISE.
+
+    [12] RETURN-TO-BASE
+        Cruise home.
+        IF within capture range of home  -> go to DESCENT.
+
+    [13] DESCENT
+        Descend to the approach platform altitude.
+        IF the glide-slope beam is intercepted  -> go to APPROACH.
+
+    [14] APPROACH
+        Follow the localizer and 3-degree glide slope down to the runway, easing
+        to approach speed.
+        IF at flare height above the ground  -> go to FLARE.
+
+    [15] FLARE
+        Cut thrust to idle and gently raise the nose to arrest the sink rate for a
+        soft touchdown.
+        IF wheels on the ground  -> go to TOUCHDOWN / ROLL-OUT.
+
+    [16] ROLL-OUT
+        Lower the nose, apply braking.
+        IF speed below stop speed  -> STOPPED.
+
+    END: stopped on the runway.
+
+
+5.  KEY IDEAS TO REMEMBER
+--------------------------------------------------------------------------------
+    - LAYERS: strategy on the outside (slow), physics on the inside (fast).
+    - ONE ROBUST INNER LOOP (INDI) absorbs all the hard nonlinear behaviour, so
+      the outer loops stay simple.
+    - DYNAMIC PRESSURE is the master "gatekeeper": it decides how much authority
+      the surfaces have, and when to hand attitude control to the RCS thrusters.
+    - SAFETY FIRST: the envelope-protection fence sits between the commands and
+      the surfaces and can override anything.
+    - THE SEQUENCER is a decision flow: each phase has a simple entry condition,
+      and the mission advances automatically as conditions are met.
+
+================================================================================
+ END — ACFT11_a_121.slx
+ Companion documents:
+   FCS_CONTROLLER_THEORY.txt       full control theory and equations
+   FCS_SCHEMATIC_ASCII.txt         block diagram (text)
+   FCS_SDOMAIN_BLOCK_DIAGRAM.txt   classic transfer-function diagram
+================================================================================

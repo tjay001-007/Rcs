@@ -1,0 +1,186 @@
+================================================================================
+ ACFT11_a_121  —  CLASSIC CONTROL BLOCK DIAGRAM  (s-domain)
+================================================================================
+ The real FCS is nonlinear and MIMO (INDI + sequencer-scheduled laws). For a
+ CLASSIC linear control block diagram we take the standard step: linearise about
+ a trim point and draw each axis as a cascade of nested single-input loops with
+ Laplace transfer functions, summing junctions (Σ) and feedback paths.
+
+ Three axes are shown:
+   B.  Longitudinal — altitude / pitch-attitude / pitch-rate / INDI  (main)
+   C.  Longitudinal — airspeed via TECS throttle loop
+   D.  Lateral / directional — track / bank / roll-rate
+
+ Conventions
+   (Σ)        summing junction;  signs marked +/-  (feedback is negative)
+   [ H(s) ]   transfer-function block
+   -->        forward signal        ..>   feedback signal
+   s          Laplace variable;   1/s = integrator
+   "hat" bars (q_dot etc.) are angular accelerations
+
+
+================================================================================
+ A.  SIGNAL / BLOCK GLOSSARY
+================================================================================
+   h_cmd, h        commanded / actual altitude              [m]
+   theta_cmd,theta commanded / actual pitch attitude         [rad]
+   q_cmd, q        commanded / actual pitch rate             [rad/s]
+   nu_q            INDI virtual input (desired pitch accel)   [rad/s^2]
+   q_dot           pitch angular acceleration                 [rad/s^2]
+   delta_e         elevator deflection                        [rad]
+   V               true airspeed                              [m/s]
+   Ktheta=2, Kq=5  attitude / rate-loop gains (fcs_params.m)
+   Kgamma=1.5      (gamma-law variant of the attitude loop)
+   N = Nfilt = 20  rad/s  INDI angular-accel filter bandwidth
+   Gq              pitch control effectiveness (scheduled):
+                     Gq = Cm_de(alpha,Mach) * (S*c / Iyy) * qbar
+   tau_a           elevator actuator lag (pos/rate limited: 25 deg, 80 deg/s)
+   M_de            airframe pitching-moment-per-elevator (= Iyy*Gq)
+
+
+================================================================================
+ B.  LONGITUDINAL AXIS  —  nested pitch loops  (altitude outer -> INDI inner)
+================================================================================
+
+  (outermost: altitude)   (attitude)      (rate)        (INDI inner accel loop)
+                                                         .............................
+ h_cmd                  theta_cmd        q_cmd    nu_q   :        eps              :
+   │   e_h              │    e_th         │   e_q  │      :  +  +--------+          :
+   ●──▶(Σ1)──▶[ TECS ]──▶(Σ2)──▶[ Ktheta]──▶(Σ3)──▶[ Kq ]──▶(Σ4)─▶[ 1/Gq ]─┐       :
+        + -   outer law  + -   (K_theta)   + -  (K_q)  + -   :        (invert)│     :
+         ▲              ▲                ▲             ▲   :                 ▼     :
+         │              │                │            │   :         +-----------------+
+         │              │                │            │   :         | Actuator        |
+         │              │                │            │   :         | 1/(tau_a s + 1) |
+         │              │                │            │   :         +--------+--------+
+         │              │                │            │   :                  │ delta_e
+         │              │                │            │   :                  ▼
+         │              │                │            │   :         +-----------------+
+         │              │                │            │   :         | Airframe        |
+         │              │                │            │   :         | q_dot = M_de*de |
+         │              │                │            │   :         |      (= Gq*de)  |
+         │              │                │            │   :         +--------+--------+
+         │              │                │            │   :      q_dot │
+         │              │                │            │   :            ├─────────────┐
+         │              │                │            │   :            ▼             │
+         │              │                │            │   :     [ N/(s+N) ]          │  (measured
+         │              │                │            │   :      washout/deriv       │   angular
+         │              │                │            │   :      filter              │   accel
+         │              │                │            │   :            │             │   feedback)
+         │              │                │            │   :            └▶(Σ4) (minus)─┘
+         │              │                │            │   :............................:
+         │              │                │            │                 │ q_dot
+         │              │                │            │                 ▼
+         │              │                │            │              [ 1/s ]   (integrate accel -> rate)
+         │              │                │            │                 │ q
+         │              │                │            └ ◀── q ──────────┤   (rate-loop feedback, - at Σ3)
+         │              │                │                              ▼
+         │              │                │                           [ 1/s ]   (integrate rate -> attitude)
+         │              │                │                              │ theta
+         │              │                └ ◀── theta ───────────────────┤   (attitude feedback, - at Σ2)
+         │              │                                               ▼
+         │              │                                            [ V/s ]   (h_dot = V*theta, integrate)
+         │              │                                               │ h
+         └ ◀────────────┴── h ───────────────────────────────────────── ┘   (altitude feedback, - at Σ1)
+
+
+ Reading it: four nested negative-feedback loops.  The INNERMOST (dotted) is the
+ INDI accel loop; around it the pitch-RATE loop (Kq, q feedback); around that the
+ pitch-ATTITUDE loop (Ktheta, theta feedback); outermost the ALTITUDE loop (TECS
+ pitch channel, h feedback).  In the zoom/coast/glide phases the Ktheta attitude
+ block is replaced by the gamma-law  Kgamma*(gamma_cmd - gamma)  with gamma
+ feedback in place of theta.
+
+
+================================================================================
+ C.  LONGITUDINAL AXIS  —  airspeed loop (TECS throttle channel)
+================================================================================
+ TECS splits control: PITCH (section B outer loop) handles the energy BALANCE
+ (height<->speed trade); THROTTLE handles total energy RATE (speed/altitude sum).
+
+   V_cmd                                    delta_th        thrust        V
+     │   e_V      +------------------------+   │    +--------------+   │
+     ●──▶(Σ5)────▶| Ktp + Kti/s            |───▶●──▶| Spool lag    |──▶●──▶ (airframe
+          + -     | (energy-rate PI)       |        | 1/(tau_s s+1)|       speed dynamics)
+          ▲       +------------------------+        | tau_s = 2 s  |    │
+          │                                         +--------------+    │
+          └ ◀───────────────── V ───────────────────────────────────────┘
+                                                    (throttle saturates 0..1)
+
+ THEORY: the PI block gives zero steady-state speed error; the first-order spool
+ lag 1/(tau_s s + 1) is the engine thrust build-up (so thrust cannot step). The
+ pitch channel (B) and throttle channel (C) are coordinated through the TECS
+ energy/ balance equations rather than acting independently.
+
+
+================================================================================
+ D.  LATERAL / DIRECTIONAL AXIS  —  track -> bank -> roll-rate
+================================================================================
+
+  (track/L1)          (bank attitude)     (roll rate)     (INDI roll inner)
+ psi_cmd            phi_cmd            p_cmd    nu_p
+   │  e_psi     +-----------+   │  e_phi  │  e_p  │     +-------+   +-----------------+
+   ●──▶(Σ6)────▶|  L1 law   |──▶(Σ7)─────▶[ Kphi]─▶(Σ8)▶[ Kp ]─▶(Σ9)▶[1/Gp]▶|servo|▶|airframe p_dot=Gp*da|
+        + -     | 2V/L1_tc  |    + -       (=3)    + -  (=6) + -          +--+--+   +---------+---------+
+        ▲       |  *sin eta |     ▲                 ▲         ▲              │ da              │ p_dot
+        │       +-----------+     │                 │         │          (p_dot meas via N/(s+N)) │
+        │        L1_tc=18 s       │                 │         └ ◀── [N/(s+N)] ◀─────────────────┤
+        │        bank<=35 deg     │                 └ ◀── p ◀──[ 1/s ]◀───────────────────────-─┤
+        │                         │                       (roll-rate fb, - at Σ8)   p           │
+        │                         └ ◀── phi ◀──[ 1/s ]◀── p ───────────────────────────────────┘
+        │                              (bank fb, - at Σ7)
+        └ ◀── psi(track) ◀── [ 1/s ]? ◀── (phi -> turn rate psi_dot = g*tan(phi)/V) ◀───────────
+                                       (track feedback via coordinated-turn kinematics, - at Σ6)
+
+   Gp = Cl_da(alpha,Mach) * (S*b / Ixx) * qbar       (roll control effectiveness)
+   The yaw channel runs the same inner structure (Kr=4, Gr = Cn_dr*(S*b/Izz)*qbar)
+   with a washed-out yaw damper  s/(s + yawdamp_wo)  around sideslip beta.
+
+
+================================================================================
+ E.  INDI INNER LOOP  —  what it reduces to in the s-domain
+================================================================================
+ The inner (dotted) loop implements, per axis:
+       delta = delta_0 + (1/G) * ( nu - q_dot_meas )          [increment form]
+ With the plant  q_dot = G*delta + f(x)  and a fast, accurate accel estimate
+ ( q_dot_meas ~ q_dot through the filter N/(s+N) ), the control term cancels the
+ plant term and the loop enforces:
+       q_dot  ≈  nu          (feedback-linearised: "commanded accel = actual accel")
+
+ So, to the loops OUTSIDE it, the inner INDI loop looks like a near-unity
+ acceleration follower.  The pitch-RATE loop then closes as a simple first order:
+       q(s) / q_cmd(s)  ≈  Kq / (s + Kq)            (Kq = 5  ->  tau ≈ 0.2 s)
+ and the pitch-ATTITUDE loop as a second order:
+       theta(s)/theta_cmd(s) ≈ (Ktheta*Kq) / ( s^2 + Kq*s + Ktheta*Kq )
+                              (wn ≈ sqrt(Ktheta*Kq) ≈ 3.2 rad/s,  zeta ≈ 0.8)
+
+ This is the whole point of INDI: it turns the messy, scheduling-dependent
+ airframe  q_dot(delta) = Gq(alpha,Mach,qbar)*delta  into a clean integrator
+ chain, so the OUTER loops can be tuned with constant classical gains (Ktheta,
+ Kq, Kphi, Kp, ...) that hold across the entire M0.4-M4 envelope.
+
+
+================================================================================
+ F.  WHERE THE CLASSIC PICTURE IS APPROXIMATE  (honest caveats)
+================================================================================
+  * G (and hence 1/G) is SCHEDULED, not constant — Gq = Cm_de(alpha,Mach)*
+    (S*c/Iyy)*qbar.  The diagram's "1/Gq" block is a gain that varies with the
+    flight condition; the inner loop is designed so this cancels the matching
+    plant gain.
+  * Actuators carry POSITION and RATE limits (25 deg / 80 deg/s on elevator,
+    etc.); the linear 1/(tau_a s+1) block is the small-signal approximation.
+    INDI enforces the rate limit as a per-step increment clamp inside the loop.
+  * q-bar FADE multiplies the inner-loop authority (0 below 1000 Pa, full above
+    6000 Pa) — an anti-windup gain not drawn as a separate block here.
+  * Envelope protection (alpha / Nz / bank limiters) sits between the attitude
+    and rate loops as command saturations — nonlinear, so omitted from the
+    linear diagram.
+  * The mission sequencer SWITCHES which outer block is active (TECS vs gamma-law
+    vs flare); each switch is a bumpless-transfer reconfiguration of the diagram.
+
+================================================================================
+ END — ACFT11_a_121.slx
+ Gains/effectiveness: fcs_params.m + setup_gschedule.m.
+ See FCS_CONTROLLER_THEORY.txt (full theory) and FCS_SCHEMATIC_MERMAID.md
+ (software-structure flowchart) for the complementary views.
+================================================================================
